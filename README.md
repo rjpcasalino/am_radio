@@ -1,3 +1,5 @@
+Requires [`mpv`](https://mpv.io/)
+
 Example:
 
 ```
