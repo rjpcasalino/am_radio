@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 # ==============================================================================
-# am_radio.pl - A command-line internet radio player
+# am_radio.pl - A command-line internet radio player (with optional TUI mode)
 # ------------------------------------------------------------------------------
 # Perl rewrite of the original am_radio.zsh script.
 #
@@ -11,6 +11,8 @@
 #   * Discovers new stations via the public Radio-Browser.info API
 #   * Optionally applies a lo-fi "old time AM radio" audio filter
 #   * Optionally dumps stream metadata (ICY/ID3 tags) using 'ffprobe'
+#   * Optionally drives a vintage-tube-radio TUI (-t) with frequency dial,
+#     pulsing ON AIR lamp, animated signal meter and live track display
 #
 # External programs required at runtime:
 #   * mpv      - to actually play the audio (mandatory)
@@ -20,46 +22,45 @@
 
 use strict;            # Force variable declarations - catches typos at compile time
 use warnings;          # Enable runtime warnings about suspicious constructs
+use utf8;              # Source file is UTF-8; lets length()/substr() count chars not bytes
 use Getopt::Std;       # Core module for parsing single-letter command line options
 use File::Basename;    # Provides basename() so we can show a clean script name
 use JSON::PP;          # Pure-Perl JSON parser (core since 5.14) - replaces the 'jq' tool
 use IO::Socket::UNIX;  # Unix-domain socket - for talking to mpv's IPC server
-use POSIX ();          # Used for POSIX::_exit() in the child to skip cleanup blocks
+use IO::Select;        # Multiplex I/O - lets us add a timeout to IPC reads
+use POSIX qw(:termios_h :sys_wait_h);  # termios for raw terminal mode, WNOHANG for non-blocking waitpid
+use Time::HiRes qw(time sleep);        # Sub-second time() and sleep() for the TUI event loop
+use Encode qw(encode_utf8);            # UTF-8-correct URL escaping in uri_escape()
+
+# Make sure box-drawing chars and other non-ASCII output gets encoded properly
+# on the way to the terminal. Without this, characters like ╔ get mangled.
+binmode STDOUT, ':encoding(UTF-8)';
+binmode STDERR, ':encoding(UTF-8)';
 
 # ==============================================================================
 # CONFIGURATION & SETUP
 # ==============================================================================
 
-# Path to the user's saved-stations file. We pull HOME from the environment
-# so this works on any user account. %ENV is Perl's hash of environment vars.
 my $CONFIG_FILE = "$ENV{HOME}/.radio_stations";
-
-# This array will hold each saved station as one line of the form
-# "Station Name::Stream URL". Populated below by reading the config file.
 my @STATIONS;
 
-# ANSI escape sequences for terminal colors. \e is the literal ESC character.
-# These render as colored text in any reasonably modern terminal.
-my $CYAN   = "\e[36m";    # Cyan foreground
-my $GREEN  = "\e[32m";    # Green foreground
-my $YELLOW = "\e[33m";    # Yellow foreground
-my $BOLD   = "\e[1m";     # Bold/bright
-my $RESET  = "\e[0m";     # Reset all formatting back to normal
+# ANSI color escape sequences. Note: \e is the literal ESC byte (0x1B).
+my $CYAN    = "\e[36m";
+my $GREEN   = "\e[32m";
+my $YELLOW  = "\e[33m";
+my $RED     = "\e[31m";
+my $MAGENTA = "\e[35m";
+my $WHITE   = "\e[37m";
+my $BOLD    = "\e[1m";
+my $DIM     = "\e[2m";
+my $RESET   = "\e[0m";
 
 # ------------------------------------------------------------------------------
-# First-run bootstrap: if the config file doesn't exist, create one with a few
-# sensible default stations so the user has something to listen to.
+# First-run bootstrap (unchanged from original)
 # ------------------------------------------------------------------------------
-if (! -f $CONFIG_FILE) {                     # -f is Perl's "file exists and is regular file" test
+if (! -f $CONFIG_FILE) {
     print "${YELLOW}Creating default station list at $CONFIG_FILE...${RESET}\n";
-
-    # Open in write mode ('>'). The 'or die' idiom aborts with an error if the
-    # open fails. $! is Perl's "last system error message" variable.
     open(my $fh, '>', $CONFIG_FILE) or die "Cannot create $CONFIG_FILE: $!";
-
-    # Heredoc syntax: <<'TAG' starts a multi-line string ending at TAG.
-    # Single quotes around the tag mean "do NOT interpolate $variables" -
-    # which is what we want here, since these are literal config defaults.
     print $fh <<'END';
 # Internet Radio Stations Config
 # Format: Station Name::Stream URL
@@ -74,32 +75,23 @@ END
 }
 
 # ------------------------------------------------------------------------------
-# Read the config file line by line, ignoring blank lines and comments (#).
-# Each surviving line becomes one entry in @STATIONS.
+# Read the config file
 # ------------------------------------------------------------------------------
 open(my $cfg, '<', $CONFIG_FILE) or die "Cannot open $CONFIG_FILE: $!";
-while (my $line = <$cfg>) {                  # <$cfg> reads one line including newline
-    chomp $line;                             # Strip the trailing newline
-    next if $line =~ /^\s*$/;                # Skip lines that are blank/whitespace-only
-    next if $line =~ /^\s*#/;                # Skip comment lines (start with optional WS then #)
-    push @STATIONS, $line;                   # Append the survivor to our station array
+while (my $line = <$cfg>) {
+    chomp $line;
+    next if $line =~ /^\s*$/;
+    next if $line =~ /^\s*#/;
+    push @STATIONS, $line;
 }
 close($cfg);
 
 # ==============================================================================
-# FUNCTIONS
+# CLI FUNCTIONS (non-TUI)
 # ==============================================================================
 
-# ------------------------------------------------------------------------------
-# show_help - Print usage info and exit. Mirrors the help text of the original
-# zsh script, but uses plain ASCII labels in place of emoji.
-# ------------------------------------------------------------------------------
 sub show_help {
-    # basename($0) gives just the script's filename, dropping any directory path.
-    # $0 is the magic variable holding the program name as it was invoked.
     my $name = basename($0);
-
-    # Heredoc with double-quoted tag: <<"END" interpolates $variables inside.
     print <<"END";
 ${BOLD}Usage:${RESET} $name [OPTIONS] [STATION_NUMBER]
 
@@ -111,51 +103,65 @@ ${BOLD}Options:${RESET}
   -f QUERY   Find/discover new stations on the web (e.g., -f 'jazz')
   -o         Enable 'Old Time Radio' audio filter (lo-fi AM sound)
   -i         Dump initial station metadata (ffprobe required)
+  -t         Tuner mode: vintage TUI with dial, signal meter and ON AIR lamp
   -h         Show this help message and exit
+
+${BOLD}Tuner mode keys:${RESET}
+  ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
+  ${CYAN}1${RESET}-${CYAN}9${RESET}          Jump to preset (first 9 stations)
+  ${CYAN}o${RESET}            Toggle Lo-Fi AM filter
+  ${CYAN}r${RESET}            Re-tune (kick mpv if a stream stalls)
+  ${CYAN}q${RESET} / ${CYAN}Esc${RESET}      Quit
 END
     exit 0;
 }
 
-# ------------------------------------------------------------------------------
-# list_stations - Print a numbered list of all saved stations. We split each
-# entry on '::' and only show the name (the human-readable left half).
-# ------------------------------------------------------------------------------
 sub list_stations {
-    # 0 .. $#STATIONS  is the range of valid array indices ($#arr = last index).
-    # Perl arrays are 0-indexed internally, so we display $i + 1 to the user.
     for my $i (0 .. $#STATIONS) {
-        # split with a limit of 2 means "split on the FIRST '::' only", so
-        # if the URL itself contained '::' it wouldn't be over-split.
         my ($name) = split /::/, $STATIONS[$i], 2;
         printf "  %s%d)%s %s\n", $CYAN, $i + 1, $RESET, $name;
     }
 }
 
 # ------------------------------------------------------------------------------
-# uri_escape - Tiny percent-encoder for URL query strings. We can't rely on
-# URI::Escape (not a core module), so we roll our own. Anything outside the
-# RFC 3986 "unreserved" set gets converted to %XX hex form.
-# Example: "jazz fusion" -> "jazz%20fusion".
+# uri_escape - UTF-8-correct percent-encoder for URL query strings.
+# Runs the input through encode_utf8 first so multibyte chars like 'é' get
+# encoded as their UTF-8 bytes (%C3%A9) rather than as their codepoint (%E9).
 # ------------------------------------------------------------------------------
 sub uri_escape {
-    my ($str) = @_;                          # Function args arrive in @_ ; unpack the first
-    # The substitution: capture any char NOT in the safe set, replace with %XX.
-    # The /e flag makes the replacement an expression (sprintf call here).
-    # ord() gets the byte value, sprintf "%02X" formats as 2-digit uppercase hex.
-    $str =~ s/([^A-Za-z0-9\-._~])/sprintf("%%%02X", ord($1))/ge;
-    return $str;
+    my ($str) = @_;
+    my $bytes = encode_utf8($str);              # multibyte chars -> UTF-8 bytes
+    $bytes =~ s/([^A-Za-z0-9\-._~])/sprintf("%%%02X", ord($1))/ge;
+    return $bytes;
 }
 
 # ------------------------------------------------------------------------------
-# discover_stations - Query Radio-Browser.info for stations matching a search
-# term, show the results, and let the user save one to their config.
+# run_capture - safe replacement for backticks. Takes a command and arguments
+# as a list, runs it without involving a shell, and returns its stdout. This
+# means a stream URL containing shell metacharacters can't trigger code
+# execution the way it would with `cmd "$var"`.
 # ------------------------------------------------------------------------------
+sub run_capture {
+    my (@cmd) = @_;
+    my $pid = open(my $ph, '-|');               # list-form pipe open: no shell involved
+    return undef unless defined $pid;
+
+    if ($pid == 0) {
+        # Child: silence stderr, then exec the requested command.
+        open(STDERR, '>', '/dev/null');
+        exec(@cmd) or POSIX::_exit(127);
+    }
+
+    # Parent: slurp the child's stdout.
+    local $/;                                    # Slurp mode (read whole stream as one string)
+    my $output = <$ph>;
+    close $ph;
+    return $output;
+}
+
 sub discover_stations {
     my ($query) = @_;
 
-    # We need 'curl' for the HTTP request. JSON parsing is now done in pure
-    # Perl via JSON::PP, so we no longer need the 'jq' tool the zsh version had.
-    # system() returns the child exit status; 0 means success.
     if (system("command -v curl > /dev/null 2>&1") != 0) {
         print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
         exit 1;
@@ -163,37 +169,27 @@ sub discover_stations {
 
     print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
 
-    # Build the API URL. uri_escape ensures spaces/punctuation in the query
-    # don't break the URL. String concatenation in Perl is the . operator.
     my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
                 . '?name=' . uri_escape($query)
                 . '&limit=10&hidebroken=true';
 
-    # Backticks run a shell command and capture its stdout into a Perl scalar.
-    # -s = silent, -L = follow redirects. Quoting $api_url for the shell.
-    my $response = `curl -sL "$api_url"`;
+    # Pass --max-time so a hung server can't freeze us forever.
+    my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
 
-    # Parse JSON inside an eval block so a malformed response can't kill us.
-    # If decode_json dies, $@ will hold the error message.
-    my $data = eval { decode_json($response) };
+    my $data = eval { decode_json($response // '') };
     if ($@ || ref($data) ne 'ARRAY') {
         print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
         exit 1;
     }
 
-    # $data is a reference to an array of hashrefs - dereference with @$data.
     my $count = scalar @$data;
     if ($count == 0) {
         print "No active stations found for that query.\n";
         exit 0;
     }
 
-    # Walk the results and pretty-print each one.
     for my $i (0 .. $count - 1) {
-        my $s = $data->[$i];                 # arrow syntax dereferences array/hash refs
-
-        # The // operator (defined-or): use the right side if the left is undef.
-        # This guards against missing fields in the API response.
+        my $s = $data->[$i];
         my $name    = $s->{name}    // '(unknown)';
         my $bitrate = $s->{bitrate} // 0;
         my $tags    = $s->{tags}    // '';
@@ -205,22 +201,16 @@ sub discover_stations {
         }
     }
 
-    # Prompt the user to optionally save one of the listed stations.
     print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
-    my $choice = <STDIN>;                    # Read one line from standard input
-    chomp $choice if defined $choice;        # Trim trailing newline (if user pressed Enter at all)
+    my $choice = <STDIN>;
+    chomp $choice if defined $choice;
 
-    # Validate the input: must be all digits and within range.
-    # Anything else (empty, letters, out of range) just skips the save.
     if (defined $choice && $choice =~ /^\d+$/ && $choice >= 1 && $choice <= $count) {
         my $picked = $data->[$choice - 1];
         my $name = $picked->{name} // 'Unknown Station';
         my $url  = $picked->{url}  // '';
 
-        # Append the new station to the config file ('>>' = append mode).
         open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
-        # Use explicit concatenation rather than "$name::$url" because Perl
-        # could mistakenly read $name:: as a package-qualified variable.
         print $out $name . '::' . $url . "\n";
         close($out);
 
@@ -230,27 +220,29 @@ sub discover_stations {
 }
 
 # ------------------------------------------------------------------------------
-# dump_info - Use ffprobe to peek at a stream's metadata headers (ICY tags,
-# ID3 tags, Ogg tags, etc.) before playback starts.
+# dump_info - peek at a stream's metadata via ffprobe.
+# Now uses run_capture() so the URL is passed as a separate argv element and
+# can't break out into the shell.
 # ------------------------------------------------------------------------------
 sub dump_info {
     my ($url) = @_;
     print "\n${BOLD}${CYAN}=== Stream Information ===${RESET}\n";
 
-    # If ffprobe isn't installed, say so and bail out cleanly.
     if (system("command -v ffprobe > /dev/null 2>&1") != 0) {
         print "  ${YELLOW}(Install 'ffprobe' to see deep metadata)${RESET}\n";
         print "${BOLD}${CYAN}==========================${RESET}\n\n";
         return;
     }
 
-    # Ask ffprobe for ALL format tags rather than only the icy-* ones. This
-    # catches both Shoutcast-style ICY headers AND standard tags like 'title'
-    # or 'service_name' that Ogg/Opus streams tend to use.
-    #   -v quiet                          : suppress ffprobe's progress chatter
-    #   -show_entries format_tags         : we only want the metadata block
-    #   -of default=...                   : flat "key=value" output, with keys
-    my $probe = `ffprobe -v quiet -show_entries format_tags -of default=noprint_wrappers=1:nokey=0 "$url" 2>/dev/null`;
+    # ffprobe -timeout is in microseconds (5_000_000us = 5s)
+    my $probe = run_capture(
+        'ffprobe',
+        '-v', 'quiet',
+        '-timeout', '5000000',
+        '-show_entries', 'format_tags',
+        '-of', 'default=noprint_wrappers=1:nokey=0',
+        $url,
+    );
 
     if (!defined $probe || $probe eq '') {
         print "  ${YELLOW}No metadata headers found. The station might not broadcast tags.${RESET}\n";
@@ -258,37 +250,20 @@ sub dump_info {
         return;
     }
 
-    # Use a hash as a "set" to deduplicate identical output lines. A station
-    # that sends BOTH 'icy-name' and 'service_name' with the same value would
-    # otherwise produce two identical printed lines.
     my %seen;
-
-    # Walk each line of ffprobe's output. split with /\n/ breaks the string.
     for my $line (split /\n/, $probe) {
-
-        # Each line looks like 'TAG:key=value' (or sometimes just 'key=value').
-        # Capture everything after the FIRST '=' as the tag value.
         next unless $line =~ /=(.*)$/;
-        my $value = $1;                      # $1 holds the first regex capture group
-
-        # Skip tags whose value is empty or whitespace-only - some streams
-        # advertise the field but leave it blank, which would otherwise
-        # produce ugly "Station:" lines with nothing after them.
+        my $value = $1;
         next if $value =~ /^\s*$/;
 
-        # Decide which human-readable label this tag deserves. We check the
-        # key part of the line with a regex. \b is a word boundary, which
-        # prevents 'genre=' from matching inside something like 'subgenre='.
         my $out;
         if    ($line =~ /icy-name=/         || $line =~ /service_name=/) { $out = "  Station: $value"; }
         elsif ($line =~ /icy-genre=/        || $line =~ /\bgenre=/     ) { $out = "  Genre:   $value"; }
         elsif ($line =~ /icy-br=/           || $line =~ /\bbitrate=/   ) { $out = "  Bitrate: $value kbps"; }
         elsif ($line =~ /icy-description=/                             ) { $out = "  Desc:    $value"; }
         elsif ($line =~ /StreamTitle=/      || $line =~ /\btitle=/     ) { $out = "  Track:   $value"; }
-        else  { next; }                      # Some other tag we don't care about
+        else  { next; }
 
-        # The post-increment $seen{$out}++ returns 0 the first time we see
-        # this exact line, then non-zero forever after. So 'unless' prints once.
         unless ($seen{$out}++) {
             print "$out\n";
         }
@@ -298,47 +273,882 @@ sub dump_info {
 }
 
 # ==============================================================================
+# IPC: talking to mpv's JSON socket
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# ipc_get_property - send a JSON 'get_property' command and return the value.
+# Now bounded by a timeout so a frozen mpv can't hang the caller indefinitely.
+# Uses IO::Select to wait at most $timeout seconds across all reads.
+# ------------------------------------------------------------------------------
+sub ipc_get_property {
+    my ($socket_path, $property, $id, $timeout) = @_;
+    $timeout //= 0.5;                             # default 500ms ceiling per call
+
+    my $sock = IO::Socket::UNIX->new(
+        Type    => SOCK_STREAM,
+        Peer    => $socket_path,
+        Timeout => 1,
+    );
+    return undef unless $sock;
+
+    my $request = encode_json({
+        command    => [ 'get_property', $property ],
+        request_id => $id,
+    });
+    # syswrite is unbuffered - the IPC server expects each command on one line
+    syswrite($sock, "$request\n");
+
+    my $sel = IO::Select->new($sock);
+    my $buf = '';
+    my $deadline = time() + $timeout;
+    my $value;
+
+    while (time() < $deadline) {
+        my $remaining = $deadline - time();
+        $remaining = 0.05 if $remaining < 0.05;
+        my @ready = $sel->can_read($remaining);
+        last unless @ready;
+
+        my $chunk;
+        my $r = sysread($sock, $chunk, 8192);
+        last if !defined $r || $r == 0;
+        $buf .= $chunk;
+
+        # mpv's IPC is line-delimited JSON. Pull off one complete line at a
+        # time and try to match it against our request_id.
+        while ($buf =~ s/^([^\n]*)\n//) {
+            my $line = $1;
+            next unless length $line;
+            my $msg = eval { decode_json($line) };
+            next if $@;
+            next unless ref($msg) eq 'HASH';
+
+            if (defined $msg->{request_id} && $msg->{request_id} == $id) {
+                if (defined $msg->{error} && $msg->{error} eq 'success') {
+                    $value = $msg->{data};
+                }
+                close $sock;
+                return $value;                    # found our reply, exit early
+            }
+            # else: spontaneous event message, ignore
+        }
+    }
+
+    close $sock;
+    return $value;                                # may be undef on timeout
+}
+
+# ------------------------------------------------------------------------------
+# poll_track_loop - background-mode track watcher (used in non-TUI playback).
+# Polls every 5 seconds and prints a "Now Playing" block when the track
+# changes. Now actually USES the station/genre/bitrate it fetches (those were
+# dead code in the original).
+# ------------------------------------------------------------------------------
+sub poll_track_loop {
+    my ($socket_path) = @_;
+
+    my $waited = 0;
+    while (! -S $socket_path) {
+        return if $waited >= 15;
+        sleep 1;
+        $waited++;
+    }
+    sleep 2;                                      # let mpv connect to stream
+
+    my $last_title;
+    my $req_id = 0;
+
+    # Helper: is this metadata value worth showing?
+    my $has = sub {
+        my ($v) = @_;
+        return defined $v && $v =~ /\S/;
+    };
+
+    while (1) {
+        $req_id++;
+        my $title = ipc_get_property($socket_path, 'metadata/icy-title', $req_id);
+
+        if (defined $title && length $title) {
+            if (!defined $last_title || $title ne $last_title) {
+
+                $req_id++; my $station = ipc_get_property($socket_path, 'metadata/icy-name',  $req_id);
+                $req_id++; my $genre   = ipc_get_property($socket_path, 'metadata/icy-genre', $req_id);
+                $req_id++; my $bitrate = ipc_get_property($socket_path, 'metadata/icy-br',    $req_id);
+
+                # Print the full block - this is what the original *intended*
+                # to do but never actually wrote out.
+                print "\n${BOLD}${CYAN}=== Now Playing ===${RESET}\n";
+                print "  Station: $station\n"      if $has->($station);
+                print "  Genre:   $genre\n"        if $has->($genre);
+                print "  Bitrate: $bitrate kbps\n" if $has->($bitrate);
+                print "  Track:   $title\n";
+                print "${BOLD}${CYAN}==========================${RESET}\n";
+
+                $last_title = $title;
+            }
+        }
+
+        sleep 5;                                  # tighter than the original's 30s
+    }
+}
+
+# ==============================================================================
+# TUI MODE - vintage tube-radio terminal UI
+# ==============================================================================
+#
+# Layout (66 cols x 22 rows, Unicode box drawing):
+#
+#   ╔════════════════════════════════════════════════════════════════╗
+#   ║ ● ON AIR             RADIO TERMINAL              [Lo-Fi:OFF ]  ║
+#   ╠════════════════════════════════════════════════════════════════╣
+#   ║                                                                ║
+#   ║   ┌──────────────────────────────────────────────────────────┐ ║
+#   ║   │ ► KEXP Seattle (music + talk)                  920 kHz   │ ║
+#   ║   │ ♪  The Beatles — Here Comes the Sun                      │ ║
+#   ║   └──────────────────────────────────────────────────────────┘ ║
+#   ║                                                                ║
+#   ║   FREQUENCY                                                    ║
+#   ║                       ▼                                        ║
+#   ║   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   ║
+#   ║   ╎    ╎    ╎    │    ╎    ╎    ╎    ╎    ╎    ╎    ╎    ╎    ║
+#   ║   540   700  900  1080  1260 1440  1620 1700               kHz ║
+#   ║                                                                ║
+#   ║   SIGNAL ▰▰▰▰▰▰▰▱▱▱      PRESETS  1 2 3 4 5 6 7 8 9            ║
+#   ║                                                                ║
+#   ║   > Tuning…                                                    ║
+#   ╠════════════════════════════════════════════════════════════════╣
+#   ║   ◀ ▶ tune    1-9 preset    o filter    r retune    q quit    ║
+#   ╚════════════════════════════════════════════════════════════════╝
+#
+# The TUI process layout:
+#
+#       parent perl  --(event loop)--> reads keys, polls IPC, redraws
+#            |
+#            +--(fork+exec)--> mpv (silent, audio only)
+#
+# Unlike the non-TUI flow, the parent is the IPC poller here, so no second
+# fork is needed. mpv's stdio is redirected to /dev/null so nothing leaks
+# onto the screen and disturbs our drawing.
+# ==============================================================================
+
+# Visible widths used by the drawing routines. Don't change without re-doing
+# the padding maths in the row builders.
+my $TUI_WIDTH      = 66;     # total terminal columns we use
+my $TUI_INNER      = 64;     # chars between the left and right border
+my $TUI_HEIGHT     = 22;     # total rows
+my $TUI_DIAL_WIDTH = 56;     # length of the horizontal dial line
+my $TUI_DIAL_LEFT  = 4;      # left padding from the inner column 0 of the dial
+
+# ------------------------------------------------------------------------------
+# tui_term_setup / tui_term_restore
+#
+# We use POSIX termios to put STDIN into "raw-ish" mode:
+#   * ICANON off : reads return immediately, no waiting for a newline
+#   * ECHO   off : keystrokes don't appear on the screen as the user types
+#   * VMIN=0,VTIME=0 : sysread returns whatever's available (or nothing)
+#
+# We deliberately leave ISIG ON, so Ctrl-C still generates SIGINT — our
+# signal handler then runs the cleanup routine.
+# ------------------------------------------------------------------------------
+sub tui_term_setup {
+    my $saved = POSIX::Termios->new;
+    $saved->getattr(fileno(STDIN));
+
+    my $tio = POSIX::Termios->new;
+    $tio->getattr(fileno(STDIN));
+    my $lflag = $tio->getlflag;
+    $tio->setlflag($lflag & ~(ECHO | ICANON));   # disable line buffering and echo
+    $tio->setcc(VMIN,  0);                       # non-blocking reads
+    $tio->setcc(VTIME, 0);
+    $tio->setattr(fileno(STDIN), TCSANOW);
+
+    return $saved;
+}
+
+sub tui_term_restore {
+    my ($saved) = @_;
+    $saved->setattr(fileno(STDIN), TCSANOW) if $saved;
+}
+
+# ------------------------------------------------------------------------------
+# tui_read_key - non-blocking single-keystroke reader.
+# Returns one of: 'left', 'right', 'up', 'down', a literal one-character
+# string ('q', '5', etc.), or undef if no input was ready within $timeout.
+#
+# Arrow keys arrive as 3-byte escape sequences (e.g. ESC '[' 'A'), so we
+# read up to 8 bytes at a time and pattern-match.
+# ------------------------------------------------------------------------------
+sub tui_read_key {
+    my ($timeout) = @_;
+
+    my $rin = '';
+    vec($rin, fileno(STDIN), 1) = 1;             # add STDIN to the read set
+    my $ready = select($rin, undef, undef, $timeout);
+    return undef unless $ready;
+
+    my $buf = '';
+    my $n = sysread(STDIN, $buf, 8);
+    return undef if !defined $n || $n == 0;
+
+    return 'left'  if $buf eq "\e[D";
+    return 'right' if $buf eq "\e[C";
+    return 'up'    if $buf eq "\e[A";
+    return 'down'  if $buf eq "\e[B";
+    return 'esc'   if $buf eq "\e";
+    return $buf;                                  # single char (or other)
+}
+
+# ------------------------------------------------------------------------------
+# tui_term_size - ask the terminal how big it is. Falls back to 80x24 if
+# stty isn't available. We don't use any user-controlled args here so the
+# backtick is safe.
+# ------------------------------------------------------------------------------
+sub tui_term_size {
+    my $size = `stty size 2>/dev/null`;
+    return (24, 80) unless defined $size && length $size;
+    chomp $size;
+    my ($rows, $cols) = split /\s+/, $size;
+    return ($rows || 24, $cols || 80);
+}
+
+# ------------------------------------------------------------------------------
+# tui_start_mpv - fork+exec mpv as a background child with its stdio
+# redirected to /dev/null (so it can't write over our TUI). Returns the
+# child's PID via the state hash.
+# ------------------------------------------------------------------------------
+sub tui_start_mpv {
+    my ($st) = @_;
+
+    my (undef, $url) = split /::/, $st->{stations}[$st->{current}], 2;
+
+    # If mpv left a stale socket from a previous run, clear it.
+    unlink $st->{sock} if -e $st->{sock};
+
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+
+    if ($pid == 0) {
+        # CHILD: detach from terminal stdio, then exec mpv. We use POSIX::_exit
+        # on failure so we don't run any END blocks belonging to the parent.
+        open(STDIN,  '<', '/dev/null');
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+
+        my @args = (
+            'mpv',
+            '--no-video',
+            '--no-terminal',                      # tells mpv to not try to drive the tty
+            '--display-tags=',
+            '--msg-level=all=error',
+            "--input-ipc-server=$st->{sock}",
+        );
+        push @args, '--af=lavfi=[highpass=f=300,lowpass=f=4500,acompressor]'
+            if $st->{filter};
+        push @args, $url;
+
+        # exec() never returns on success; the 'or' branch only runs if exec
+        # itself fails (e.g. mpv not on PATH despite our earlier check).
+        exec(@args) or POSIX::_exit(127);
+    }
+
+    $st->{mpv_pid}    = $pid;
+    $st->{track}      = '';
+    $st->{last_poll}  = 0;
+    $st->{tune_start} = time();
+}
+
+# ------------------------------------------------------------------------------
+# tui_stop_mpv - politely SIGTERM mpv, then escalate to SIGKILL if it doesn't
+# die within ~1 second. Either way, reap the zombie and remove the socket.
+# ------------------------------------------------------------------------------
+sub tui_stop_mpv {
+    my ($st) = @_;
+    my $pid = $st->{mpv_pid};
+    return unless $pid;
+
+    kill 'TERM', $pid;
+    for (1 .. 20) {                               # wait up to ~1s (20 * 50ms)
+        my $r = waitpid($pid, WNOHANG);
+        if ($r == $pid || $r == -1) {
+            $st->{mpv_pid} = undef;
+            unlink $st->{sock} if -e $st->{sock};
+            return;
+        }
+        sleep 0.05;
+    }
+
+    # Still alive - SIGKILL it.
+    kill 'KILL', $pid;
+    waitpid($pid, 0);
+    $st->{mpv_pid} = undef;
+    unlink $st->{sock} if -e $st->{sock};
+}
+
+# ------------------------------------------------------------------------------
+# tui_query_track - one-shot fetch of the current ICY title. Returns undef
+# if mpv isn't ready yet, has no metadata, or the IPC call timed out.
+# ------------------------------------------------------------------------------
+sub tui_query_track {
+    my ($st) = @_;
+    return undef unless -S $st->{sock};
+    return ipc_get_property(
+        $st->{sock},
+        'metadata/icy-title',
+        $st->{req_id}++,
+        0.3,
+    );
+}
+
+# ------------------------------------------------------------------------------
+# tui_change / tui_jump - station-change helpers. Both stop mpv, advance the
+# index, then start mpv again. tui_change cycles by +/-1; tui_jump goes
+# straight to a specific 0-based index.
+# ------------------------------------------------------------------------------
+sub tui_change {
+    my ($st, $delta) = @_;
+    my $n = scalar @{ $st->{stations} };
+    return if $n == 0;
+    # Perl's % gives non-negative results for positive divisors, so
+    # (-1) % 5 == 4 - exactly what we want for wraparound.
+    $st->{current} = ($st->{current} + $delta) % $n;
+    tui_stop_mpv($st);
+    tui_start_mpv($st);
+    $st->{msg}       = 'Tuning…';
+    $st->{msg_until} = time() + 1.2;
+}
+
+sub tui_jump {
+    my ($st, $idx) = @_;
+    return if $idx < 0 || $idx >= scalar @{ $st->{stations} };
+    return if $idx == $st->{current};
+    $st->{current} = $idx;
+    tui_stop_mpv($st);
+    tui_start_mpv($st);
+    $st->{msg}       = 'Tuning…';
+    $st->{msg_until} = time() + 1.2;
+}
+
+sub tui_toggle_filter {
+    my ($st) = @_;
+    $st->{filter} = $st->{filter} ? 0 : 1;
+    tui_stop_mpv($st);
+    tui_start_mpv($st);
+    $st->{msg}       = $st->{filter} ? 'Lo-Fi filter ON'  : 'Lo-Fi filter OFF';
+    $st->{msg_until} = time() + 1.5;
+}
+
+sub tui_retune {
+    my ($st) = @_;
+    tui_stop_mpv($st);
+    tui_start_mpv($st);
+    $st->{msg}       = 'Re-tuning…';
+    $st->{msg_until} = time() + 1.2;
+}
+
+# ------------------------------------------------------------------------------
+# tui_fake_freq - turn a station index into a fake AM-band frequency for the
+# display. Real AM band: 540 kHz to 1700 kHz. Just visual flavour.
+# ------------------------------------------------------------------------------
+sub tui_fake_freq {
+    my ($idx, $total) = @_;
+    return 1020 if $total <= 1;
+    my $f = 540 + int($idx * (1700 - 540) / ($total - 1) + 0.5);
+    # Round to the nearest 10 kHz channel for that vintage AM feel.
+    return int(($f + 5) / 10) * 10;
+}
+
+# ------------------------------------------------------------------------------
+# pad_to / truncate_to - padding helpers that count CHARACTERS not bytes.
+# Required because length() on a string with ANSI codes overcounts width,
+# and length() on a UTF-8 byte string would too. Inputs here must be plain
+# (no ANSI) under 'use utf8;'.
+# ------------------------------------------------------------------------------
+sub pad_to {
+    my ($s, $w) = @_;
+    my $l = length $s;
+    return $s . (' ' x ($w - $l)) if $l < $w;
+    return substr($s, 0, $w);
+}
+
+sub truncate_to {
+    my ($s, $w) = @_;
+    return $s if length($s) <= $w;
+    return substr($s, 0, $w - 1) . '…';
+}
+
+# ------------------------------------------------------------------------------
+# Drawing primitives. Each row of the TUI is exactly $TUI_INNER (64) chars
+# wide INSIDE the borders. We build the row as plain text first, then wrap
+# with the border chars. ANSI color codes are added as prefixes/suffixes
+# around specific spans - they don't count toward visible width.
+# ------------------------------------------------------------------------------
+
+# Center a body string inside an inner-width space, return the padded string
+sub centered {
+    my ($s, $w) = @_;
+    my $extra = $w - length($s);
+    return $s if $extra <= 0;
+    my $left  = int($extra / 2);
+    my $right = $extra - $left;
+    return (' ' x $left) . $s . (' ' x $right);
+}
+
+# Build the title bar (row 2): " ● ON AIR ............. RADIO TERMINAL ............. [Lo-Fi:XXX] "
+sub tui_title_row {
+    my ($st) = @_;
+
+    my $dot      = $st->{pulse} ? '●' : '○';
+    my $on_air   = "$dot ON AIR";                 # 8 visible chars
+    my $brand    = 'RADIO TERMINAL';              # 14 visible chars
+    my $filter   = $st->{filter} ? '[Lo-Fi:ON ]'  # 11 visible chars (note trailing space)
+                                 : '[Lo-Fi:OFF]';
+
+    # Inner width 64. Used: 1 (lead) + 8 + 14 + 11 + 1 (trail) = 35. Pad = 29. Split 14/15.
+    my $body =
+          ' ' . $on_air
+        . (' ' x 14)
+        . $brand
+        . (' ' x 15)
+        . $filter . ' ';
+
+    # Sanity check: keeps us honest if someone tweaks a constant.
+    die "title row width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
+
+    # Now colorize specific substrings. Order matters - replace longer/more
+    # specific things first so we don't double-substitute.
+    my $coloured = $body;
+    if ($st->{pulse}) {
+        $coloured =~ s/●/$RED$BOLD●$RESET/;
+    } else {
+        $coloured =~ s/○/${RED}${DIM}○$RESET/;
+    }
+    $coloured =~ s/ON AIR/${RED}${BOLD}ON AIR$RESET/;
+    $coloured =~ s/RADIO TERMINAL/$BOLD${YELLOW}RADIO TERMINAL$RESET/;
+    if ($st->{filter}) {
+        $coloured =~ s/\Q[Lo-Fi:ON ]/$MAGENTA${BOLD}[Lo-Fi:ON ]$RESET/;
+    } else {
+        $coloured =~ s/\Q[Lo-Fi:OFF]/${DIM}[Lo-Fi:OFF]$RESET/;
+    }
+
+    return $coloured;
+}
+
+# Station-info row 1: "   ► <name padded>          <freq> kHz   "
+sub tui_info_row1 {
+    my ($st) = @_;
+    my (undef, undef) = (undef, undef);
+    my ($name) = split /::/, $st->{stations}[$st->{current}], 2;
+    my $freq   = tui_fake_freq($st->{current}, scalar @{ $st->{stations} });
+    my $freq_label = sprintf '%4d kHz', $freq;     # 8 chars
+
+    # Inner card width is 58 (the box uses 60, minus the two │ chars).
+    # Layout: "│ ► " (4) + name (variable) + spaces + freq_label (8) + " │" (2)
+    # Card visible width 60 includes the two │ chars; inner is 58.
+    my $inner_card = 58;
+    my $name_w     = $inner_card - 2 - 8 - 1;     # leave room for "► " and " freq"
+    my $name_t     = truncate_to($name, $name_w);
+    my $left       = '► ' . $name_t;
+    my $pad        = $inner_card - length($left) - length($freq_label);
+    $pad = 1 if $pad < 1;
+    my $card_inner = $left . (' ' x $pad) . $freq_label;
+    $card_inner = pad_to($card_inner, $inner_card);
+
+    # Wrap with "│" and the outer 3-space margin so the whole thing is exactly 64
+    # wide: "   │" (4) + 58 + "│ " (2) = 64.
+    my $body = '   │' . $card_inner . '│ ';
+    die "info1 width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
+
+    # Colors
+    my $coloured = $body;
+    $coloured =~ s/►/${GREEN}${BOLD}►$RESET/;
+    $coloured =~ s/\Q$freq_label/$YELLOW$freq_label$RESET/;
+    # Box chars
+    $coloured =~ s/│/${CYAN}│$RESET/g;
+    return $coloured;
+}
+
+# Station-info row 2: "   │ ♪ <track padded>                          │ "
+sub tui_info_row2 {
+    my ($st) = @_;
+    my $track = $st->{track};
+    my $display;
+    if (defined $track && length $track) {
+        $display = '♪ ' . truncate_to($track, 56 - 2);   # 56 = inner card minus a 2-char prefix slot
+    } else {
+        my $waiting = ($st->{tune_start} && time() - $st->{tune_start} < 5)
+            ? '… tuning in …'
+            : '(no track info)';
+        $display = '♪ ' . $waiting;
+    }
+    my $inner_card = 58;
+    my $card_inner = pad_to($display, $inner_card);
+
+    my $body = '   │' . $card_inner . '│ ';
+    die "info2 width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
+
+    my $coloured = $body;
+    $coloured =~ s/♪/${GREEN}♪$RESET/;
+    $coloured =~ s/\(no track info\)/${DIM}(no track info)$RESET/;
+    $coloured =~ s/… tuning in …/${YELLOW}… tuning in …$RESET/;
+    $coloured =~ s/│/${CYAN}│$RESET/g;
+    return $coloured;
+}
+
+# Top, bottom edges of the station-info card
+sub tui_card_top {
+    my $body = '   ┌' . ('─' x 58) . '┐ ';
+    return "${CYAN}${body}${RESET}";
+}
+sub tui_card_bot {
+    my $body = '   └' . ('─' x 58) . '┘ ';
+    return "${CYAN}${body}${RESET}";
+}
+
+# Frequency dial: needle, line, ticks, labels.
+# Each call returns a single row.
+sub tui_dial_needle_row {
+    my ($st) = @_;
+    my $n = scalar @{ $st->{stations} };
+    my $cur = $st->{current};
+
+    # Needle's column inside the dial (0..DIAL_WIDTH-1)
+    my $pos;
+    if ($n <= 1) {
+        $pos = int($TUI_DIAL_WIDTH / 2);
+    } else {
+        $pos = int($cur * ($TUI_DIAL_WIDTH - 1) / ($n - 1) + 0.5);
+    }
+
+    my $body = (' ' x ($TUI_DIAL_LEFT + $pos))
+             . '▼'
+             . (' ' x ($TUI_INNER - $TUI_DIAL_LEFT - $pos - 1));
+    die "needle row width" if length($body) != $TUI_INNER;
+
+    my $coloured = $body;
+    $coloured =~ s/▼/${YELLOW}${BOLD}▼$RESET/;
+    return $coloured;
+}
+
+sub tui_dial_line_row {
+    my $body = (' ' x $TUI_DIAL_LEFT)
+             . ('━' x $TUI_DIAL_WIDTH)
+             . (' ' x ($TUI_INNER - $TUI_DIAL_LEFT - $TUI_DIAL_WIDTH));
+    die "dial line width" if length($body) != $TUI_INNER;
+    # Color the bar
+    my $coloured = $body;
+    $coloured =~ s/(━+)/$CYAN$1$RESET/;
+    return $coloured;
+}
+
+sub tui_dial_tick_row {
+    my ($st) = @_;
+    my $n = scalar @{ $st->{stations} };
+    my $cur = $st->{current};
+
+    # Build an array, one slot per dial column. Default to a thin space.
+    my @slots = (' ') x $TUI_DIAL_WIDTH;
+
+    # Place a faint tick for every station, then overdraw the current one.
+    for my $i (0 .. $n - 1) {
+        next if $i == $cur;
+        my $p = $n <= 1 ? int($TUI_DIAL_WIDTH/2)
+                        : int($i * ($TUI_DIAL_WIDTH - 1) / ($n - 1) + 0.5);
+        $p = 0 if $p < 0;
+        $p = $TUI_DIAL_WIDTH - 1 if $p > $TUI_DIAL_WIDTH - 1;
+        $slots[$p] = "${DIM}${CYAN}╎${RESET}";
+    }
+    # Current station's tick: bright and bold.
+    my $p_cur = $n <= 1 ? int($TUI_DIAL_WIDTH/2)
+                        : int($cur * ($TUI_DIAL_WIDTH - 1) / ($n - 1) + 0.5);
+    $p_cur = 0 if $p_cur < 0;
+    $p_cur = $TUI_DIAL_WIDTH - 1 if $p_cur > $TUI_DIAL_WIDTH - 1;
+    $slots[$p_cur] = "${YELLOW}${BOLD}│${RESET}";
+
+    # We can't use length() on the assembled string anymore (it has ANSI in
+    # it), so build the visible-width prefix and suffix as plain spaces.
+    my $body = (' ' x $TUI_DIAL_LEFT)
+             . join('', @slots)
+             . (' ' x ($TUI_INNER - $TUI_DIAL_LEFT - $TUI_DIAL_WIDTH));
+    return $body;
+}
+
+# Frequency labels under the dial. Hand-tuned for $TUI_DIAL_WIDTH == 56.
+# Real AM channels at 540, 720, 900, 1080, 1260, 1440, 1620, 1700.
+sub tui_dial_label_row {
+    # Place each label so its first char sits at an evenly-spaced position
+    # along the dial. With 8 labels and width 56, spacing is 8 chars.
+    my @labels = ('540', '720', '900', '1080', '1260', '1440', '1620', '1700');
+    my @slots = (' ') x $TUI_DIAL_WIDTH;
+    for my $li (0 .. $#labels) {
+        my $pos = int($li * ($TUI_DIAL_WIDTH - 4) / $#labels);
+        my $lab = $labels[$li];
+        for my $ci (0 .. length($lab) - 1) {
+            my $p = $pos + $ci;
+            $slots[$p] = substr($lab, $ci, 1) if $p < $TUI_DIAL_WIDTH;
+        }
+    }
+    my $body = (' ' x $TUI_DIAL_LEFT)
+             . join('', @slots)
+             . (' ' x ($TUI_INNER - $TUI_DIAL_LEFT - $TUI_DIAL_WIDTH));
+    die "label row width" if length($body) != $TUI_INNER;
+    # Trailing "kHz" tag would push us off-edge; we put it on the same row as
+    # the label by overwriting the very last 4 visible chars.
+    substr($body, $TUI_INNER - 5, 4) = ' kHz';
+    my $coloured = $body;
+    $coloured =~ s/(\d+)/$DIM$1$RESET/g;
+    $coloured =~ s/kHz/${DIM}${CYAN}kHz$RESET/;
+    return $coloured;
+}
+
+# Signal meter: 10 cells, filled according to $st->{signal} (0..10).
+# Block characters used: ▰ (filled), ▱ (empty).
+sub tui_status_row {
+    my ($st) = @_;
+
+    my $sig = $st->{signal};
+    $sig = 0  if $sig < 0;
+    $sig = 10 if $sig > 10;
+    my $bar = ('▰' x $sig) . ('▱' x (10 - $sig));
+
+    # Presets: 1..min(9, n_stations). Highlight the current one.
+    my $n = scalar @{ $st->{stations} };
+    my $max_preset = $n > 9 ? 9 : $n;
+    my @cells;
+    for my $i (1 .. $max_preset) {
+        push @cells, ($i - 1 == $st->{current}) ? "[$i]" : " $i ";
+    }
+    my $presets = join('', @cells);
+
+    # Compose. Inner width 64. We'll pad at the end.
+    my $left  = "   SIGNAL $bar";                # "   " + "SIGNAL " + 10 cells = 3+7+10 = 20
+    my $right = "PRESETS $presets";              # "PRESETS " + cells
+    my $gap   = $TUI_INNER - length($left) - length($right);
+    $gap = 1 if $gap < 1;
+    my $body = $left . (' ' x $gap) . $right;
+    $body = pad_to($body, $TUI_INNER);
+
+    my $coloured = $body;
+    # Color the filled cells green-ish, empty cells dim
+    $coloured =~ s/(▰+)/$GREEN$1$RESET/g;
+    $coloured =~ s/(▱+)/$DIM$1$RESET/g;
+    $coloured =~ s/SIGNAL/${BOLD}SIGNAL$RESET/;
+    $coloured =~ s/PRESETS/${BOLD}PRESETS$RESET/;
+    # Highlight the [N] active preset
+    $coloured =~ s/\[(\d)\]/${YELLOW}${BOLD}[$1]$RESET/g;
+    return $coloured;
+}
+
+# Status / message line. Shows the transient message ("Tuning…", "Lo-Fi ON")
+# when one is active; otherwise blank.
+sub tui_msg_row {
+    my ($st) = @_;
+    my $msg = '';
+    if ($st->{msg} && time() < $st->{msg_until}) {
+        $msg = '> ' . $st->{msg};
+    }
+    my $body = pad_to('   ' . $msg, $TUI_INNER);
+    my $coloured = $body;
+    $coloured =~ s/^(\s*> )/${YELLOW}$1$RESET/;
+    return $coloured;
+}
+
+# Footer / help line
+sub tui_help_row {
+    my $body = '  ◀ ▶ tune    1-9 preset    o filter    r retune    q quit  ';
+    $body = pad_to($body, $TUI_INNER);
+    my $coloured = $body;
+    $coloured =~ s/(◀ ▶|1-9|o|r|q)/${CYAN}$1$RESET/g;
+    return $coloured;
+}
+
+# Pure-cosmetic empty interior row
+sub tui_blank_row {
+    return ' ' x $TUI_INNER;
+}
+
+# ------------------------------------------------------------------------------
+# tui_draw - assemble all the rows and dump them to the screen in one go.
+# We move the cursor to the top-left, then for each row print the row body
+# wrapped in left/right border chars and an explicit ESC[K to clear any
+# leftover characters past our right border (handles terminal resizes
+# or stale output gracefully).
+# ------------------------------------------------------------------------------
+sub tui_draw {
+    my ($st) = @_;
+
+    # Top border + title bar + divider
+    my @rows = (
+        "${CYAN}╔" . ('═' x $TUI_INNER) . "╗${RESET}",
+        "${CYAN}║${RESET}" . tui_title_row($st)    . "${CYAN}║${RESET}",
+        "${CYAN}╠" . ('═' x $TUI_INNER) . "╣${RESET}",
+        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_card_top()        . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_info_row1($st)    . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_info_row2($st)    . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_card_bot()        . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . pad_to('   FREQUENCY', $TUI_INNER) . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_dial_needle_row($st) . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_dial_line_row()    . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_dial_tick_row($st) . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_dial_label_row()   . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_status_row($st)    . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
+        "${CYAN}║${RESET}" . tui_msg_row($st)       . "${CYAN}║${RESET}",
+        "${CYAN}╠" . ('═' x $TUI_INNER) . "╣${RESET}",
+        "${CYAN}║${RESET}" . tui_help_row()        . "${CYAN}║${RESET}",
+        "${CYAN}╚" . ('═' x $TUI_INNER) . "╝${RESET}",
+    );
+
+    # Move cursor to home and print each row, clearing to end of line on the way
+    print "\e[H";
+    for my $row (@rows) {
+        print $row, "\e[K\n";
+    }
+    # Flush the remainder of the screen below us. \e[J clears from cursor to
+    # bottom; useful when we shrink or the previous frame had stuff below.
+    print "\e[J";
+}
+
+# ------------------------------------------------------------------------------
+# radio_tui - main TUI driver.
+# ------------------------------------------------------------------------------
+sub radio_tui {
+    my ($initial_idx, $initial_filter) = @_;
+
+    if (@STATIONS == 0) {
+        print STDERR "${YELLOW}No stations configured.${RESET}\n";
+        return;
+    }
+
+    # Make sure the terminal is big enough for our drawing.
+    my ($rows, $cols) = tui_term_size();
+    if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
+        print STDERR "${YELLOW}Terminal is ${cols}x${rows}; need at least ${TUI_WIDTH}x${TUI_HEIGHT}.${RESET}\n";
+        exit 1;
+    }
+
+    my %st = (
+        stations   => \@STATIONS,
+        current    => ($initial_idx // 0),
+        track      => '',
+        filter     => $initial_filter ? 1 : 0,
+        signal     => 8,
+        pulse      => 0,
+        mpv_pid    => undef,
+        sock       => "/tmp/am_radio_tui_$$.sock",
+        last_poll  => 0,
+        last_anim  => 0,
+        msg        => '',
+        msg_until  => 0,
+        tune_start => 0,
+        req_id     => 1,
+    );
+
+    my $saved_term = tui_term_setup();
+
+    # Enter alternate screen buffer (saves the user's existing terminal
+    # contents) and hide the cursor for the duration of the TUI.
+    print "\e[?1049h\e[?25l\e[2J\e[H";
+
+    # Cleanup is idempotent (a flag prevents double-cleanup) and used by
+    # both the normal exit path and the signal handlers.
+    my $cleaned = 0;
+    my $cleanup = sub {
+        return if $cleaned++;
+        tui_stop_mpv(\%st);
+        tui_term_restore($saved_term);
+        print "\e[?25h\e[?1049l";                 # show cursor, leave alt screen
+    };
+    local $SIG{INT}  = sub { $cleanup->(); exit 130; };
+    local $SIG{TERM} = sub { $cleanup->(); exit 143; };
+    local $SIG{HUP}  = sub { $cleanup->(); exit 129; };
+
+    tui_start_mpv(\%st);
+    $st{msg}       = 'Tuning…';
+    $st{msg_until} = time() + 1.5;
+
+    # ---- main event loop --------------------------------------------------
+    # ~10 Hz redraw; key reads use a 50ms select timeout so the loop is
+    # snappy without being a busy-wait. Per-iteration tasks:
+    #   * read keystroke (non-blocking)
+    #   * if 1.5s since last poll, re-fetch the ICY title from mpv
+    #   * if 0.2s since last animation frame, jiggle the signal meter
+    #     and toggle the ON AIR pulse
+    #   * redraw the whole panel
+    while (1) {
+        if (defined(my $key = tui_read_key(0.05))) {
+            if    ($key eq 'q' || $key eq 'Q' || $key eq 'esc')  { last }
+            elsif ($key eq 'right' || $key eq 'n' || $key eq 'N'){ tui_change(\%st, +1) }
+            elsif ($key eq 'left'  || $key eq 'p' || $key eq 'P'){ tui_change(\%st, -1) }
+            elsif ($key =~ /^[1-9]$/)                            { tui_jump(\%st, $key - 1) }
+            elsif ($key eq 'o' || $key eq 'O')                   { tui_toggle_filter(\%st) }
+            elsif ($key eq 'r' || $key eq 'R')                   { tui_retune(\%st) }
+        }
+
+        my $now = time();
+
+        # Reap mpv if it died on its own (network drop, decoder crash, etc.)
+        # so we don't keep showing stale state.
+        if ($st{mpv_pid} && waitpid($st{mpv_pid}, WNOHANG) == $st{mpv_pid}) {
+            $st{mpv_pid}   = undef;
+            $st{msg}       = 'Stream lost — press r to retune';
+            $st{msg_until} = $now + 5;
+        }
+
+        if ($now - $st{last_poll} >= 1.5 && $st{mpv_pid}) {
+            my $t = tui_query_track(\%st);
+            $st{track} = $t if defined $t;
+            $st{last_poll} = $now;
+        }
+
+        if ($now - $st{last_anim} >= 0.2) {
+            # Slight random walk so the meter feels alive but doesn't strobe.
+            my $delta = int(rand(3)) - 1;          # -1, 0, or +1
+            $st{signal} += $delta;
+            $st{signal} = 6  if $st{signal} < 6;
+            $st{signal} = 10 if $st{signal} > 10;
+            $st{pulse}  = $st{pulse} ? 0 : 1;
+            $st{last_anim} = $now;
+        }
+
+        tui_draw(\%st);
+    }
+
+    $cleanup->();
+}
+
+# ==============================================================================
 # ARGUMENT PARSING
 # ==============================================================================
 
-# Variables we'll fill in based on the command line.
-my $STATION_CHOICE   = '';                   # Which station number to play
-my $FILTER_OLD_RADIO = 0;                    # 1 if user passed -o
-my $SHOW_INFO        = 0;                    # 1 if user passed -i
+my $STATION_CHOICE   = '';
+my $FILTER_OLD_RADIO = 0;
+my $SHOW_INFO        = 0;
+my $TUI_MODE         = 0;
 
-# Getopt::Std layout:
-#   's:' and 'f:' have a colon, meaning they REQUIRE a value (e.g. -s 3).
-#   'l', 'o', 'i', 'h' have no colon - they are simple boolean flags.
-# Parsed results land in the %opts hash; e.g. -o sets $opts{o} to 1.
 my %opts;
-unless (getopts('s:f:loih', \%opts)) {
+unless (getopts('s:f:loith', \%opts)) {
     print STDERR "${YELLOW}Invalid option.${RESET}\n";
     show_help();
 }
 
-# -h: show help and exit.
 show_help() if $opts{h};
 
-# -l: just list stations and exit. No need to load mpv or anything.
 if ($opts{l}) {
     list_stations();
     exit 0;
 }
 
-# -f QUERY: jump straight into the discovery flow (which exits on its own).
 discover_stations($opts{f}) if defined $opts{f};
 
-# -s NUM: pre-set the station choice (we'll still validate before using it).
-$STATION_CHOICE = $opts{s} if defined $opts{s};
-
-# -o: enable the lo-fi AM radio audio filter.
+$STATION_CHOICE   = $opts{s} if defined $opts{s};
 $FILTER_OLD_RADIO = 1 if $opts{o};
+$SHOW_INFO        = 1 if $opts{i};
+$TUI_MODE         = 1 if $opts{t};
 
-# -i: dump stream info before playing.
-$SHOW_INFO = 1 if $opts{i};
-
-# After getopts processes flags, @ARGV holds any leftover positional args.
-# Allows the user to write 'am_radio.pl 3' as shorthand for 'am_radio.pl -s 3'.
 if ($STATION_CHOICE eq '' && @ARGV > 0) {
     $STATION_CHOICE = $ARGV[0];
 }
@@ -347,13 +1157,31 @@ if ($STATION_CHOICE eq '' && @ARGV > 0) {
 # MAIN SCRIPT LOGIC
 # ==============================================================================
 
-# 'mpv' is mandatory - it's the actual audio player. Bail if missing.
 if (system("command -v mpv > /dev/null 2>&1") != 0) {
     print STDERR "Error: 'mpv' is required but not installed.\n";
     exit 1;
 }
 
-# If we still don't have a station selection by this point, prompt for one.
+# ------------------------------------------------------------------------------
+# TUI mode short-circuit: when -t is given, we hand off to the TUI driver
+# and never come back to the classic flow.
+# ------------------------------------------------------------------------------
+if ($TUI_MODE) {
+    my $start_idx = 0;
+    if ($STATION_CHOICE ne '') {
+        if ($STATION_CHOICE !~ /^\d+$/ || $STATION_CHOICE < 1 || $STATION_CHOICE > scalar @STATIONS) {
+            print STDERR "${YELLOW}Invalid station number for -s.${RESET}\n";
+            exit 1;
+        }
+        $start_idx = $STATION_CHOICE - 1;
+    }
+    radio_tui($start_idx, $FILTER_OLD_RADIO);
+    exit 0;
+}
+
+# ------------------------------------------------------------------------------
+# Classic flow: prompt for a station, then run mpv with a polling child.
+# ------------------------------------------------------------------------------
 if ($STATION_CHOICE eq '') {
     print "${BOLD}Select a station:${RESET}\n";
     list_stations();
@@ -362,253 +1190,52 @@ if ($STATION_CHOICE eq '') {
     chomp $STATION_CHOICE if defined $STATION_CHOICE;
 }
 
-# Validate the choice: must be all digits, and within [1, number of stations].
 my $n = scalar @STATIONS;
 if ($STATION_CHOICE !~ /^\d+$/ || $STATION_CHOICE < 1 || $STATION_CHOICE > $n) {
     print STDERR "${YELLOW}Error: Invalid selection. Please enter a number between 1 and $n.${RESET}\n";
     exit 1;
 }
 
-# Split the chosen line on '::' to separate name from URL. Limit of 2 means
-# we never split more than once, so a URL with '::' would survive intact.
-# Note we subtract 1 because the user enters 1-based, but Perl arrays are 0-based.
 my ($STATION_NAME, $STATION_URL) = split /::/, $STATIONS[$STATION_CHOICE - 1], 2;
-
-# ------------------------------------------------------------------------------
-# Build the mpv argument list as a Perl array. We'll pass it to system() as
-# a list (not a single string) so no shell is involved, which means weird
-# characters in URLs can't cause quoting/escaping bugs.
-# ------------------------------------------------------------------------------
-# ------------------------------------------------------------------------------
-# IPC / track-polling strategy
-# ------------------------------------------------------------------------------
-# mpv's --term-status-msg trick with ${media-title} or ${metadata/icy-title}
-# turns out to be unreliable for streaming radio: the status line doesn't
-# always redraw when the server pushes a new ICY title, so the displayed
-# track gets stuck on whatever was playing when mpv first connected.
-#
-# Solution: use mpv's JSON IPC protocol instead.
-#   1. Launch mpv with --input-ipc-server=/tmp/am_radio_<pid>.sock
-#      (this makes mpv listen on a Unix-domain socket for commands)
-#   2. fork() a child process that connects to that socket every 30 seconds,
-#      sends {"command": ["get_property", "metadata/icy-title"]}, and prints
-#      the current track if (and only if) it has changed.
-#   3. When mpv exits, kill the child and remove the socket file.
-#
-# The IPC socket path is unique per run thanks to $$ (the script's PID),
-# so multiple instances of this script can run in parallel without clashing.
-# ------------------------------------------------------------------------------
 
 my $IPC_SOCKET = "/tmp/am_radio_$$.sock";
 
+# Make sure a stray socket from a crashed previous run can't trip us up,
+# and tidy up if we get killed before the explicit cleanup at the end.
+unlink $IPC_SOCKET if -e $IPC_SOCKET;
+END { unlink $IPC_SOCKET if defined $IPC_SOCKET && -e $IPC_SOCKET; }
+
 my @MPV_ARGS = (
-    '--no-video',                            # Audio only - don't open a video window
-    '--display-tags=',                       # Suppress mpv's own tag spam
-    '--msg-level=all=error',                 # Quiet unless something actually breaks
-    "--input-ipc-server=$IPC_SOCKET",        # Open the IPC socket our poller will talk to
-    # NOTE: we deliberately do NOT set --term-status-msg here. mpv's status
-    # line doesn't reliably refresh on ICY metadata updates, so instead the
-    # polling child below is responsible for printing "Now Playing" lines.
+    '--no-video',
+    '--display-tags=',
+    '--msg-level=all=error',
+    "--input-ipc-server=$IPC_SOCKET",
 );
 
-# If -o was given, append an ffmpeg audio-filter chain that fakes an old
-# AM radio sound:
-#   highpass=f=300   - drops bass frequencies below 300 Hz
-#   lowpass=f=4500   - drops treble frequencies above 4500 Hz
-#   acompressor      - squashes dynamic range, like an AM transmitter would
-# Combined, the result is that classic tinny vintage AM-radio timbre.
 if ($FILTER_OLD_RADIO) {
     print "${YELLOW}[!] Lo-Fi AM Radio filter activated.${RESET}\n";
     push @MPV_ARGS, '--af=lavfi=[highpass=f=300,lowpass=f=4500,acompressor]';
 }
 
-# If -i was given, dump metadata before tuning in.
 dump_info($STATION_URL) if $SHOW_INFO;
 
 print "\n${BOLD}Tuning in to $STATION_NAME...${RESET}\n";
 print "Press ${YELLOW}Ctrl+C${RESET} to stop playback.\n\n";
 
-# ------------------------------------------------------------------------------
-# Fork a polling child BEFORE launching mpv.
-# ------------------------------------------------------------------------------
-# Process layout while playing:
-#
-#       parent perl  --(blocks in system)-->  mpv  (audio playback)
-#            |
-#            +--(fork)--> child perl --(every 30s)--> IPC socket --> mpv
-#                                       prints "Now Playing: ..."
-#
-# fork() returns:
-#   * undef  on failure
-#   * 0      to the CHILD process
-#   * the child's PID to the PARENT process
-# ------------------------------------------------------------------------------
-
 my $poller_pid = fork();
 die "fork() failed: $!" unless defined $poller_pid;
 
 if ($poller_pid == 0) {
-    # ============================================================
-    # CHILD PROCESS - polls mpv's IPC socket every 30 seconds
-    # ============================================================
     poll_track_loop($IPC_SOCKET);
-    # _exit (lower-case) skips Perl's END blocks and DESTROY calls.
-    # Important here so the child doesn't try to clean up resources
-    # the parent still owns (like the socket file).
     POSIX::_exit(0);
 }
 
-# ============================================================
-# PARENT PROCESS - runs mpv, then cleans up
-# ============================================================
-
-# system() with a list (not a string) bypasses the shell entirely.
-# This call BLOCKS until mpv exits (Ctrl+C or natural end of stream).
 system('mpv', @MPV_ARGS, $STATION_URL);
 
-# mpv has exited - shut down the polling child and remove the socket.
-# kill 'TERM' sends SIGTERM (signal 15) to the child by PID.
-# waitpid reaps it so it doesn't linger as a zombie process.
 kill 'TERM', $poller_pid;
 waitpid($poller_pid, 0);
 
-# Remove the leftover socket file. -e checks "does this path exist".
 unlink $IPC_SOCKET if -e $IPC_SOCKET;
 
 exit 0;
-
-# ==============================================================================
-# IPC POLLING SUBROUTINES (used only by the forked child)
-# ==============================================================================
-
-# ------------------------------------------------------------------------------
-# poll_track_loop - The child's main loop. Waits for mpv's socket to appear,
-# then queries the current ICY title every 30 seconds and prints it whenever
-# it changes.
-# ------------------------------------------------------------------------------
-sub poll_track_loop {
-    my ($socket_path) = @_;
-
-    # mpv takes a moment to set up its IPC socket after launch. Poll for the
-    # socket file's existence for up to 15 seconds before giving up.
-    # The -S file test is "exists and is a socket".
-    my $waited = 0;
-    while (! -S $socket_path) {
-        return if $waited >= 15;             # mpv apparently never started
-        sleep 1;
-        $waited++;
-    }
-
-    # Give mpv a couple more seconds to actually connect to the stream and
-    # receive the first ICY metadata burst before we ask for it.
-    sleep 2;
-
-    my $last_title;                          # Remembers the last title we printed
-    my $req_id    = 0;                       # Unique ID per IPC request
-
-    # Infinite loop - the parent will SIGTERM us when mpv exits.
-    while (1) {
-        $req_id++;
-        my $title = ipc_get_property($socket_path, 'metadata/icy-title', $req_id);
-
-        # Only act when the title is non-empty AND has actually changed.
-        # Stations that don't broadcast ICY titles (talk radio, news) will
-        # return undef forever - we just stay quiet in that case.
-        if (defined $title && length $title) {
-            if (!defined $last_title || $title ne $last_title) {
-
-                # Track changed (or this is the first time we've seen it).
-                # Pull the surrounding metadata so we can render the same
-                # "=== Stream Information ===" block dump_info() uses, but
-                # with the FRESH track title baked in.
-                #
-                # Each ipc_get_property call gets a unique request_id so
-                # mpv's reply can't be confused with another query's reply.
-                $req_id++;
-                my $station = ipc_get_property($socket_path, 'metadata/icy-name',  $req_id);
-                $req_id++;
-                my $genre   = ipc_get_property($socket_path, 'metadata/icy-genre', $req_id);
-                $req_id++;
-                my $bitrate = ipc_get_property($socket_path, 'metadata/icy-br',    $req_id);
-
-                # Helper to test if an IPC value is worth printing - some
-                # stations advertise empty fields (e.g. icy-name="").
-                # The defined-and-nonblank check keeps the block tidy.
-                my $has = sub {
-                    my ($v) = @_;
-                    return defined $v && $v =~ /\S/;     # has at least one non-space char
-                };
-
-                # Print the block. The leading \n is a "fresh line" cushion
-                # so we don't collide with anything mpv may have printed.
-                print "\n${BOLD}${CYAN}=== Now Playing ===${RESET}\n";
-                print "  Track:   $title\n";
-                print "${BOLD}${CYAN}==========================${RESET}\n";
-
-                $last_title = $title;
-            }
-        }
-
-        sleep 30;                            # Wait half a minute, then poll again
-    }
-}
-
-# ------------------------------------------------------------------------------
-# ipc_get_property - Send one "get_property" command over mpv's JSON IPC and
-# return the value (or undef on any failure).
-#
-# The IPC protocol is line-based JSON over a Unix socket:
-#   We send:  {"command":["get_property","NAME"],"request_id":N}\n
-#   We get:   {"data":VALUE,"error":"success","request_id":N}\n
-#
-# But mpv ALSO pushes asynchronous event messages on the same socket
-# (e.g. property-change notifications), so we have to skim past those
-# until we find the reply that matches our request_id.
-# ------------------------------------------------------------------------------
-sub ipc_get_property {
-    my ($socket_path, $property, $id) = @_;
-
-    # Open a fresh connection to the socket. SOCK_STREAM = TCP-like reliable
-    # ordered byte stream (the standard choice for Unix sockets).
-    my $sock = IO::Socket::UNIX->new(
-        Type => SOCK_STREAM,
-        Peer => $socket_path,
-    );
-    return undef unless $sock;               # mpv may have already exited
-
-    # Build and send the JSON command. Note the trailing \n: mpv's IPC
-    # parser is line-oriented, so the newline tells it "command complete".
-    my $request = encode_json({
-        command    => [ 'get_property', $property ],
-        request_id => $id,
-    });
-    print $sock "$request\n";
-
-    my $value;
-    # Read replies line by line until we find the one matching our request_id.
-    # Some of the lines will be unrelated event notifications - skip those.
-    while (my $line = <$sock>) {
-        chomp $line;
-        next unless length $line;            # Defensive: ignore blanks
-
-        # eval { } catches any decode_json exception (malformed JSON would
-        # otherwise kill the child). $@ holds the error if it dies.
-        my $msg = eval { decode_json($line) };
-        next if $@;                          # Bad JSON - just skip
-        next unless ref($msg) eq 'HASH';     # Should always be a JSON object
-
-        # Match on request_id so we ignore mpv's spontaneous event messages.
-        if (defined $msg->{request_id} && $msg->{request_id} == $id) {
-            # error == "success" means the property was readable; anything
-            # else (e.g. "property unavailable") means there's no track info.
-            if (defined $msg->{error} && $msg->{error} eq 'success') {
-                $value = $msg->{data};
-            }
-            last;                            # We got our reply - stop reading
-        }
-    }
-    close $sock;
-
-    return $value;
-}
 
