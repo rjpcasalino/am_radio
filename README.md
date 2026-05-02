@@ -24,4 +24,6 @@ Press Ctrl+C to stop playback.
 
 ![example](./screenshot.png)
 
-use the `-f` flag to discover stations from APIs the AI gathered up. More soon...
+use the `-f` flag to discover stations from [https://de1.api.radio-browser.info/json/stations/search](https://de1.api.radio-browser.info/json/stations/search)
+
+???
