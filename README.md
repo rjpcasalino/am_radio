@@ -18,5 +18,6 @@ Press Ctrl+C to stop playback.
 === Now Playing ===
   Track:   Edward Elgar - Enigma Variations Op 36
 ==========================
-
 ```
+
+[example](./screenshot.png)
