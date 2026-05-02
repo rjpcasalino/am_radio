@@ -20,4 +20,4 @@ Press Ctrl+C to stop playback.
 ==========================
 ```
 
-[example](./screenshot.png)
+![example](./screenshot.png)
