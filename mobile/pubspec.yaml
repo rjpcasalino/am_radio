@@ -1,5 +1,5 @@
 name: am_radio
-description: Internet radio player for Android and Linux.
+description: Internet radio player for Android, iOS, and Linux.
 version: 0.1.0+1
 
 environment:
@@ -13,6 +13,9 @@ dependencies:
   http: ^1.2.2
   # State management
   provider: ^6.1.2
+  # Audio playback on iOS / Android (AVFoundation on iOS, ExoPlayer on Android).
+  # Not used on Linux where mpv is spawned directly as a subprocess.
+  just_audio: ^0.10.5
 
 dev_dependencies:
   flutter_test:

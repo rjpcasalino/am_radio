@@ -61,9 +61,86 @@ kill <pid>
 
 Or just press `Ctrl+C` in the same terminal where `flutter run` was started.
 
----
+## Running on iOS (iPhone via USB-C)
 
-## Running on Android
+### Prerequisites
+
+| Requirement | Notes |
+|-------------|-------|
+| macOS with **Xcode 15+** | Required for iOS builds |
+| **CocoaPods** | `sudo gem install cocoapods` |
+| iPhone running **iOS 16+** | |
+| **USB-C cable** | |
+| Free **Apple ID** | No paid developer account needed for personal-device testing |
+
+### Step 1 — Install Xcode command-line tools
+
+```sh
+xcode-select --install
+```
+
+Open Xcode at least once and accept the license agreement.
+
+### Step 2 — Add the iOS platform to the project
+
+```sh
+cd mobile
+flutter create . --platforms ios
+```
+
+This generates the `ios/` directory.
+
+### Step 3 — Install dependencies (Flutter + CocoaPods)
+
+```sh
+flutter pub get
+cd ios && pod install && cd ..
+```
+
+### Step 4 — Sign the app with your Apple ID
+
+1. Open the workspace in Xcode:
+
+   ```sh
+   open ios/Runner.xcworkspace
+   ```
+
+2. Select the **Runner** target → **Signing & Capabilities** tab.
+3. Under **Team**, choose your personal Apple ID. Xcode creates a free
+   provisioning profile automatically.
+
+### Step 5 — Trust the developer certificate on your iPhone
+
+1. On your iPhone: **Settings → General → VPN & Device Management**
+2. Tap your Apple ID → **Trust**
+
+_(You only need to do this once per Mac / Apple ID pair.)_
+
+### Step 6 — Connect the iPhone and run
+
+```sh
+# List detected devices — confirm your iPhone appears
+flutter devices
+
+# Run on the connected iPhone
+flutter run -d <device-id-from-above>
+
+# Or let Flutter pick the only connected device automatically
+flutter run
+```
+
+### Optional: background audio while screen is locked
+
+Add the `audio` background mode to `ios/Runner/Info.plist` inside `<dict>`:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+</array>
+```
+
+---
 
 1. Add the Android SDK to your Nix shell (see the `flake.nix` comments) **or**
    install it via Android Studio.

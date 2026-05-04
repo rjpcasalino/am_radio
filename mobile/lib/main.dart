@@ -12,21 +12,18 @@ void main() {
   // invoked when the process is killed, so we must stop mpv ourselves here.
   final player = PlayerService();
 
+  // Signal handlers are only meaningful on Linux (where mpv runs as a
+  // subprocess).  iOS/Android apps are sandboxed — they don't receive POSIX
+  // signals and cannot spawn external processes.
+  //
   // SIGINT  — Ctrl+C in a terminal           (conventional exit 130)
   // SIGTERM — sent by systemd / kill / pkill  (conventional exit 143)
   // SIGHUP  — terminal closes / SSH ends      (conventional exit 129)
-  //
-  // player.stop() calls Process.kill() which is synchronous; there is no
-  // need for async/await.  The listen() callback is therefore not async so
-  // it finishes before exit() is reached.
-  //
-  // ProcessSignal.sigterm / sighup are not available on Windows; the Platform
-  // guard keeps the app portable should a Windows build be added later.
-  ProcessSignal.sigint.watch().listen((_) {
-    player.stop();
-    exit(130); // 128 + SIGINT(2)
-  });
-  if (!Platform.isWindows) {
+  if (Platform.isLinux) {
+    ProcessSignal.sigint.watch().listen((_) {
+      player.stop();
+      exit(130); // 128 + SIGINT(2)
+    });
     ProcessSignal.sigterm.watch().listen((_) {
       player.stop();
       exit(143); // 128 + SIGTERM(15)
