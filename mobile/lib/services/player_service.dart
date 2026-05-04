@@ -28,7 +28,7 @@ class PlayerService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _process = await Process.start(
+      final process = await Process.start(
         'mpv',
         [
           station.url,
@@ -39,10 +39,13 @@ class PlayerService extends ChangeNotifier {
         // Inherit stderr so mpv error messages surface in the console.
         mode: ProcessStartMode.normal,
       );
+      _process = process;
 
       // React when mpv exits on its own (e.g. stream ends / network error).
-      _process!.exitCode.then((_) {
-        if (_isPlaying) {
+      // Capture [process] so stale callbacks from a previous stream don't
+      // overwrite state after play() has already been called for a new station.
+      process.exitCode.then((_) {
+        if (identical(_process, process)) {
           _isPlaying = false;
           _process = null;
           notifyListeners();

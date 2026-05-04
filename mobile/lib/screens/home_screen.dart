@@ -190,6 +190,8 @@ class _StationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final color =
         isPlaying ? Theme.of(context).colorScheme.primary : null;
+    final playingStyle =
+        TextStyle(color: color, fontWeight: FontWeight.bold);
 
     return ListTile(
       leading: Icon(
@@ -198,7 +200,7 @@ class _StationTile extends StatelessWidget {
       ),
       title: Text(
         station.name,
-        style: isPlaying ? TextStyle(color: color, fontWeight: FontWeight.bold) : null,
+        style: isPlaying ? playingStyle : null,
       ),
       subtitle: station.genre != null
           ? Text(station.genre!, overflow: TextOverflow.ellipsis)
