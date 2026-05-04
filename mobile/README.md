@@ -39,6 +39,28 @@ flutter run -d linux
 
 `mpv` must be on your PATH (it is in the Nix dev shell).
 
+### Stopping the app (no desktop environment)
+
+When running headless (no window manager / no display), close the app with any
+of the standard POSIX signals — the app registers handlers for all three and
+ensures `mpv` is killed before exiting:
+
+| How | Signal |
+|-----|--------|
+| `Ctrl+C` in the terminal | `SIGINT` |
+| `kill <pid>` | `SIGTERM` |
+| SSH session ends / terminal closes | `SIGHUP` |
+
+```sh
+# find the PID
+pgrep -f am_radio
+
+# then kill it cleanly
+kill <pid>
+```
+
+Or just press `Ctrl+C` in the same terminal where `flutter run` was started.
+
 ---
 
 ## Running on Android
