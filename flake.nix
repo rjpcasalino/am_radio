@@ -9,30 +9,50 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        # 1. We must import nixpkgs to pass the configuration
+        pkgs = import nixpkgs {
+          inherit system;
+          config = {
+            allowUnfree = true;
+            android_sdk.accept_license = true;
+          };
+        };
+
+        # 2. Compose the Android SDK with required Flutter/Gradle components
+        # This replaces the generic androidPkgs.androidsdk with a customized bundle
+        androidComposition = pkgs.androidenv.composeAndroidPackages {
+          includeNDK = true;
+          ndkVersions = [ "28.2.13676358" ];
+          # Add 35.0.0 here:
+          buildToolsVersions = [ "33.0.1" "34.0.0" "35.0.0" ];
+          # Add 36 here (and 35 just to be safe):
+          platformVersions = [ "33" "34" "35" "36" ];
+          abiVersions = [ "armeabi-v7a" "arm64-v8a" "x86_64" ];
+          cmakeVersions = ["3.22.1"];
+        };
+        
+        androidSdk = androidComposition.androidsdk;
       in
       {
-        # ── CLI dev shell (Perl + mpv) ─────────────────────────────────────
         devShells.default = pkgs.mkShell {
           name = "am-radio-cli";
           buildInputs = with pkgs; [
             perl
             mpv
             curl
-            ffmpeg   # provides ffprobe
+            ffmpeg
           ];
-          shellHook = ''
-            echo "am_radio CLI dev shell"
-            echo "  perl am_radio.pl -h"
-          '';
         };
 
-        # ── Mobile dev shell (Flutter for Linux + Android) ─────────────────
         devShells.mobile = pkgs.mkShell {
           name = "am-radio-mobile";
-          buildInputs = with pkgs; [
-            # Flutter SDK (targets Linux desktop + Android)
+          
+          # Use 'packages' instead of 'buildInputs'
+          packages = with pkgs; [
             flutter
+            androidSdk
+            jdk17 # Flutter currently prefers JDK 17
+            cmake
 
             # Linux desktop runner dependencies
             cmake
@@ -43,80 +63,42 @@
             glib
             pcre2
 
-            # Audio backend used by the Linux app (mpv subprocess)
+            # Audio/Tools
             mpv
-
-            # Network / tooling
             curl
             git
-
-            # Useful extras
             jq
           ];
 
+          # 3. Export variables so Flutter/Gradle knows where things are
+          env = {
+            ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+            ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
+            ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/28.2.13676358";
+            JAVA_HOME = pkgs.jdk17.home;
+            CHROME_EXECUTABLE = "${pkgs.google-chrome}/bin/google-chrome";
+          };
+
           shellHook = ''
-            echo ""
             echo "╔══════════════════════════════════════════╗"
             echo "║   am_radio — mobile dev shell (Flutter)  ║"
             echo "╚══════════════════════════════════════════╝"
 
-            # ── macOS: restore Xcode toolchain ─────────────────────────────
-            # Two things break xcodebuild inside a Nix shell on macOS:
-            #
-            # 1. DEVELOPER_DIR is unset — /usr/bin/xcodebuild is an xcrun shim
-            #    that needs DEVELOPER_DIR to locate the real toolchain inside
-            #    Xcode.app.
-            #
-            # 2. Nix's clang wrapper (included via buildInputs) sets SDKROOT to
-            #    a Nix-store SDK path.  xcrun then searches for tools under that
-            #    path rather than under Xcode.app, so it reports
-            #    "tool 'xcodebuild' not found" even after DEVELOPER_DIR is set.
-            #    Unsetting SDKROOT lets xcrun fall back to the Xcode SDK.
+            # macOS toolchain fixes
             if [[ "$(uname)" == "Darwin" ]]; then
-              export DEVELOPER_DIR="$(xcode-select -p 2>/dev/null \
-                || echo '/Applications/Xcode.app/Contents/Developer')"
+              export DEVELOPER_DIR="$(xcode-select -p 2>/dev/null || echo '/Applications/Xcode.app/Contents/Developer')"
               export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
               unset SDKROOT
-              echo "Xcode developer dir: $DEVELOPER_DIR"
             fi
 
-            # ── macOS: fix ios directory permissions ────────────────────────
-            # flutter create --platforms ios creates some workspace files with
-            # mode 444 (read-only).  CocoaPods needs to rewrite those files
-            # during pod install, so ensure everything under ios/ is user-writable.
-            if [[ "$(uname)" == "Darwin" && -d "$PWD/mobile/ios" ]]; then
-              chmod -R u+w "$PWD/mobile/ios" 2>/dev/null || true
-            fi
-
-            # Bootstrap Flutter platform directories on first entry.
-            # 'flutter create . --platforms linux,android' is idempotent —
-            # it only adds missing files and never overwrites existing ones.
+            # Bootstrap Flutter platforms
             if [ ! -d "$PWD/mobile/linux/runner" ]; then
-              echo ""
-              echo "Bootstrapping Flutter platform directories …"
-              (cd "$PWD/mobile" && flutter create . \
-                --platforms linux,android \
-                --project-name am_radio \
-                --org com.example \
-                --description "Internet radio player" \
-                2>&1) || true
-              echo "Done."
+              echo "Bootstrapping Flutter platform directories..."
+              (cd mobile && flutter create . --platforms linux,android --project-name am_radio) || true
             fi
-
-            echo ""
-            echo "Quick start:"
-            echo "  cd mobile"
-            echo "  flutter pub get"
-            echo "  flutter run -d linux"
-            echo ""
-            echo "Android (requires ANDROID_HOME):"
-            echo "  flutter run -d android"
-            echo ""
-            echo "iOS (macOS only — iPhone via USB-C):"
-            echo "  flutter create . --platforms ios   # first time only"
-            echo "  cd ios && pod install && cd .."
-            echo "  flutter run"
-            echo ""
+            
+            echo "Android SDK Location: $ANDROID_HOME"
+            echo "Run 'flutter doctor' to verify setup."
           '';
         };
       }
