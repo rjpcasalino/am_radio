@@ -164,6 +164,8 @@ Add the `audio` background mode to `ios/Runner/Info.plist` inside `<dict>`:
 
 ---
 
+## Running on Android
+
 1. Add the Android SDK to your Nix shell (see the `flake.nix` comments) **or**
    install it via Android Studio.
 2. Set `ANDROID_HOME` / `ANDROID_SDK_ROOT`.
@@ -171,14 +173,44 @@ Add the `audio` background mode to `ios/Runner/Info.plist` inside `<dict>`:
 
 ```sh
 cd mobile
+flutter create . --platforms android   # first time only
+flutter pub get
 flutter run -d android
 ```
 
-> **Note:** The current `PlayerService` spawns `mpv` as a subprocess, which
-> works on Linux but not Android.  For Android audio, replace `PlayerService`
-> with a platform-specific implementation using
-> [`audioplayers`](https://pub.dev/packages/audioplayers) or
-> [`just_audio`](https://pub.dev/packages/just_audio).
+### Android cleartext HTTP
+
+Many radio stations stream over plain HTTP (`http://`). Android 9+ (API 28)
+blocks cleartext traffic by default, which causes a
+`CleartextNotPermittedException` when ExoPlayer tries to open an `http://` URL.
+
+The repository already ships
+`android/app/src/main/AndroidManifest.xml` and
+`android/app/src/main/res/xml/network_security_config.xml` with cleartext
+traffic enabled, so `flutter create . --platforms android` will not overwrite
+them.
+
+If you have an existing `android/` directory that was generated before this fix
+was added, patch it manually:
+
+```sh
+# 1. Add the networkSecurityConfig attribute to the application tag
+#    (only if not already present)
+grep -q 'networkSecurityConfig=' android/app/src/main/AndroidManifest.xml || \
+  sed -i 's|<application|<application android:networkSecurityConfig="@xml/network_security_config"|' \
+      android/app/src/main/AndroidManifest.xml
+
+# 2. Create the config file
+mkdir -p android/app/src/main/res/xml
+cat > android/app/src/main/res/xml/network_security_config.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
+EOF
+```
+
+The Nix `mobile` dev shell applies this patch automatically.
 
 ---
 

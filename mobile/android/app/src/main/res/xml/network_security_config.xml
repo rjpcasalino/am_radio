@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Allow cleartext (plain HTTP) traffic for internet radio streams.
+
+  Many radio stations broadcast over HTTP rather than HTTPS.  Android 9+
+  (API 28) blocks cleartext traffic by default, which prevents ExoPlayer
+  from opening http:// stream URLs.  This config re-enables it globally so
+  that any station URL — HTTP or HTTPS — can be played.
+
+  Security note: global cleartext permission means HTTP traffic for ALL
+  domains is allowed (not just radio hosts).  A domain-specific config
+  would be more restrictive, but internet radio stations use thousands of
+  different hostnames that cannot be enumerated ahead of time — and the
+  app itself has no backend traffic that would benefit from enforcement.
+  Restricting to specific hosts is impractical for a general-purpose
+  radio player.
+
+  Referenced from AndroidManifest.xml via:
+    android:networkSecurityConfig="@xml/network_security_config"
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

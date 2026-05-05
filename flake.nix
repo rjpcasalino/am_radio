@@ -96,7 +96,30 @@
               echo "Bootstrapping Flutter platform directories..."
               (cd mobile && flutter create . --platforms linux,android --project-name am_radio) || true
             fi
-            
+
+            # ── Android: allow cleartext HTTP for radio streams ─────────────
+            # Android 9+ blocks plain HTTP by default (CleartextNotPermittedException).
+            # network_security_config.xml is committed and won't be touched by
+            # flutter create, but AndroidManifest.xml is generated fresh, so patch
+            # it if the networkSecurityConfig attribute is not already present.
+            MANIFEST="$PWD/mobile/android/app/src/main/AndroidManifest.xml"
+            NSC_XML="$PWD/mobile/android/app/src/main/res/xml/network_security_config.xml"
+            if [ -f "$MANIFEST" ] && ! grep -q 'networkSecurityConfig=' "$MANIFEST"; then
+              sed -i 's|<application|<application android:networkSecurityConfig="@xml/network_security_config"|' "$MANIFEST"
+              echo "Patched AndroidManifest.xml to allow cleartext HTTP."
+            fi
+            # Ensure the xml resource file is present (committed version is the
+            # source of truth; this is a safety net for edge cases).
+            if [ ! -f "$NSC_XML" ]; then
+              mkdir -p "$(dirname "$NSC_XML")"
+              cat > "$NSC_XML" << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
+EOF
+            fi
+
             echo "Android SDK Location: $ANDROID_HOME"
             echo "Run 'flutter doctor' to verify setup."
           '';
