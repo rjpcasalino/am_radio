@@ -21,12 +21,18 @@ class PlayerService extends ChangeNotifier {
   // iOS / Android: just_audio player and its playing-state subscription.
   AudioPlayer? _audioPlayer;
   StreamSubscription<bool>? _playingSub;
+  StreamSubscription<ProcessingState>? _processingSub;
 
   Station? _currentStation;
   bool _isPlaying = false;
+  bool _isBuffering = false;
 
   Station? get currentStation => _currentStation;
   bool get isPlaying => _isPlaying;
+
+  /// True while just_audio is connecting / buffering the stream.
+  /// Always false on Linux (mpv doesn't expose buffering state to us).
+  bool get isBuffering => _isBuffering;
 
   /// Start playing [station].  Stops any currently playing stream first.
   Future<void> play(Station station) async {
@@ -64,6 +70,11 @@ class PlayerService extends ChangeNotifier {
       } else {
         // iOS / Android: use just_audio.
         _audioPlayer ??= AudioPlayer();
+
+        // Mark as buffering while the stream is being set up / connecting.
+        _isBuffering = true;
+        notifyListeners();
+
         await _audioPlayer!.setUrl(station.url);
         await _audioPlayer!.play();
 
@@ -72,6 +83,19 @@ class PlayerService extends ChangeNotifier {
         _playingSub = _audioPlayer!.playingStream.listen((isPlaying) {
           if (!isPlaying && _isPlaying) {
             _isPlaying = false;
+            _isBuffering = false;
+            notifyListeners();
+          }
+        });
+
+        // Track processing state so the UI can distinguish
+        // buffering/connecting from actively streaming audio.
+        await _processingSub?.cancel();
+        _processingSub = _audioPlayer!.processingStateStream.listen((state) {
+          final buffering = state == ProcessingState.loading ||
+              state == ProcessingState.buffering;
+          if (buffering != _isBuffering) {
+            _isBuffering = buffering;
             notifyListeners();
           }
         });
@@ -88,6 +112,8 @@ class PlayerService extends ChangeNotifier {
   Future<void> stop() async {
     await _playingSub?.cancel();
     _playingSub = null;
+    await _processingSub?.cancel();
+    _processingSub = null;
 
     if (_process != null) {
       _process!.kill();
@@ -96,12 +122,14 @@ class PlayerService extends ChangeNotifier {
     await _audioPlayer?.stop();
 
     _isPlaying = false;
+    _isBuffering = false;
     notifyListeners();
   }
 
   @override
   void dispose() {
     _playingSub?.cancel();
+    _processingSub?.cancel();
     _process?.kill();
     _audioPlayer?.dispose();
     super.dispose();

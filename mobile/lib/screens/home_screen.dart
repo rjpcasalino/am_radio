@@ -255,14 +255,21 @@ class _HomeScreenState extends State<HomeScreen> {
               Expanded(
                 child: _loading
                     ? const _BlinkingText('… searching …')
-                    : Text(
-                        player.isPlaying ? '… tuning in …' : '',
-                        style: _monoStyle(dim: true),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    : (player.isBuffering
+                        ? const _BlinkingText('… tuning in …')
+                        : Text(
+                            player.isPlaying ? '◉ on air' : '',
+                            style: _monoStyle(
+                              color: const Color(0xFF4CAF50),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          )),
               ),
               const SizedBox(width: 8),
-              SignalMeter(isPlaying: player.isPlaying),
+              SignalMeter(
+                isPlaying: player.isPlaying,
+                isBuffering: player.isBuffering,
+              ),
             ],
           ),
         ],
@@ -301,10 +308,12 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 14),
         Padding(
-          padding: const EdgeInsets.only(left: 20, bottom: 8),
-          child: Text(
-            'PRESETS',
-            style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Center(
+            child: Text(
+              'PRESETS',
+              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+            ),
           ),
         ),
         Padding(
@@ -321,6 +330,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
+      alignment: WrapAlignment.center,
       children: List.generate(count, (i) {
         final isActive = player.currentStation?.url == _stations[i].url;
         return _PresetButton(
