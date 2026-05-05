@@ -13,7 +13,7 @@ discovery API.
 
 ---
 
-## Development on NixOS
+## Development on NixOS / macOS
 
 A Nix flake is provided at the repo root.  Enter the Flutter dev shell:
 
@@ -26,6 +26,16 @@ The shell will:
 1. Put Flutter, cmake, ninja, clang, pkg-config, gtk3, and mpv on your PATH.
 2. Automatically scaffold the `linux/` and `android/` platform directories
    the first time you enter (runs `flutter create . --platforms linux,android`).
+3. **macOS only:** restore `DEVELOPER_DIR` and prepend
+   `$DEVELOPER_DIR/usr/bin` to `PATH` so that `xcodebuild` and other Xcode
+   command-line tools work correctly inside the Nix shell.
+
+> **macOS note:** Nix resets the login environment, which breaks the
+> `/usr/bin/xcodebuild` shim that macOS ships — the shim needs `DEVELOPER_DIR`
+> to locate the real toolchain inside `Xcode.app`.  The shell hook detects
+> macOS (`uname == Darwin`) and re-exports `DEVELOPER_DIR` via
+> `xcode-select -p`, so `xcodebuild`, `xcrun`, `swift`, and friends all work
+> as expected.
 
 ---
 

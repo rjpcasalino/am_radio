@@ -60,6 +60,17 @@
             echo "║   am_radio — mobile dev shell (Flutter)  ║"
             echo "╚══════════════════════════════════════════╝"
 
+            # ── macOS: restore Xcode toolchain ─────────────────────────────
+            # Nix resets the environment, which breaks the /usr/bin/xcodebuild
+            # shim that macOS ships.  That shim needs DEVELOPER_DIR to locate
+            # the real xcodebuild inside Xcode.app.
+            if [[ "$(uname)" == "Darwin" ]]; then
+              XCODE_DEV="$(xcode-select -p 2>/dev/null || echo '/Applications/Xcode.app/Contents/Developer')"
+              export DEVELOPER_DIR="$XCODE_DEV"
+              export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
+              echo "Xcode developer dir: $DEVELOPER_DIR"
+            fi
+
             # Bootstrap Flutter platform directories on first entry.
             # 'flutter create . --platforms linux,android' is idempotent —
             # it only adds missing files and never overwrites existing ones.
@@ -83,6 +94,11 @@
             echo ""
             echo "Android (requires ANDROID_HOME):"
             echo "  flutter run -d android"
+            echo ""
+            echo "iOS (macOS only — iPhone via USB-C):"
+            echo "  flutter create . --platforms ios   # first time only"
+            echo "  cd ios && pod install && cd .."
+            echo "  flutter run"
             echo ""
           '';
         };
