@@ -26,16 +26,23 @@ The shell will:
 1. Put Flutter, cmake, ninja, clang, pkg-config, gtk3, and mpv on your PATH.
 2. Automatically scaffold the `linux/` and `android/` platform directories
    the first time you enter (runs `flutter create . --platforms linux,android`).
-3. **macOS only:** restore `DEVELOPER_DIR` and prepend
-   `$DEVELOPER_DIR/usr/bin` to `PATH` so that `xcodebuild` and other Xcode
+3. **macOS only:** restore `DEVELOPER_DIR`, prepend `$DEVELOPER_DIR/usr/bin`
+   to `PATH`, and unset `SDKROOT` so that `xcodebuild` and other Xcode
    command-line tools work correctly inside the Nix shell.
+4. **macOS only:** run `chmod -R u+w mobile/ios/` if that directory exists, so
+   CocoaPods can rewrite the workspace files it needs during `pod install`.
 
-> **macOS note:** Nix resets the login environment, which breaks the
-> `/usr/bin/xcodebuild` shim that macOS ships — the shim needs `DEVELOPER_DIR`
-> to locate the real toolchain inside `Xcode.app`.  The shell hook detects
-> macOS (`uname == Darwin`) and re-exports `DEVELOPER_DIR` via
-> `xcode-select -p`, so `xcodebuild`, `xcrun`, `swift`, and friends all work
-> as expected.
+> **macOS / xcodebuild note:** two things break `xcodebuild` inside `nix develop`:
+>
+> 1. `DEVELOPER_DIR` is unset — `/usr/bin/xcodebuild` is an `xcrun` shim that
+>    needs `DEVELOPER_DIR` to find the real toolchain inside `Xcode.app`.
+> 2. Nix's `clang` wrapper (pulled in via `buildInputs`) sets `SDKROOT` to a
+>    Nix-store SDK path.  `xcrun` then searches that path for tools and reports
+>    *"tool 'xcodebuild' not found"* even if `DEVELOPER_DIR` is correct.
+>    Unsetting `SDKROOT` lets `xcrun` fall back to the Xcode SDK automatically.
+>
+> The shell hook handles both: it re-exports `DEVELOPER_DIR` via
+> `xcode-select -p` and runs `unset SDKROOT`.
 
 ---
 
@@ -104,6 +111,11 @@ This generates the `ios/` directory.
 
 ```sh
 flutter pub get
+
+# Flutter creates some ios/ files read-only (mode 444); fix that before
+# CocoaPods tries to rewrite Runner.xcworkspace/contents.xcworkspacedata.
+chmod -R u+w ios/
+
 cd ios && pod install && cd ..
 ```
 

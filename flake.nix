@@ -61,14 +61,31 @@
             echo "╚══════════════════════════════════════════╝"
 
             # ── macOS: restore Xcode toolchain ─────────────────────────────
-            # Nix resets the environment, which breaks the /usr/bin/xcodebuild
-            # shim that macOS ships.  That shim needs DEVELOPER_DIR to locate
-            # the real xcodebuild inside Xcode.app.
+            # Two things break xcodebuild inside a Nix shell on macOS:
+            #
+            # 1. DEVELOPER_DIR is unset — /usr/bin/xcodebuild is an xcrun shim
+            #    that needs DEVELOPER_DIR to locate the real toolchain inside
+            #    Xcode.app.
+            #
+            # 2. Nix's clang wrapper (included via buildInputs) sets SDKROOT to
+            #    a Nix-store SDK path.  xcrun then searches for tools under that
+            #    path rather than under Xcode.app, so it reports
+            #    "tool 'xcodebuild' not found" even after DEVELOPER_DIR is set.
+            #    Unsetting SDKROOT lets xcrun fall back to the Xcode SDK.
             if [[ "$(uname)" == "Darwin" ]]; then
-              XCODE_DEV="$(xcode-select -p 2>/dev/null || echo '/Applications/Xcode.app/Contents/Developer')"
-              export DEVELOPER_DIR="$XCODE_DEV"
+              export DEVELOPER_DIR="$(xcode-select -p 2>/dev/null \
+                || echo '/Applications/Xcode.app/Contents/Developer')"
               export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
+              unset SDKROOT
               echo "Xcode developer dir: $DEVELOPER_DIR"
+            fi
+
+            # ── macOS: fix ios directory permissions ────────────────────────
+            # flutter create --platforms ios creates some workspace files with
+            # mode 444 (read-only).  CocoaPods needs to rewrite those files
+            # during pod install, so ensure everything under ios/ is user-writable.
+            if [[ "$(uname)" == "Darwin" && -d "$PWD/mobile/ios" ]]; then
+              chmod -R u+w "$PWD/mobile/ios" 2>/dev/null || true
             fi
 
             # Bootstrap Flutter platform directories on first entry.
