@@ -55,7 +55,6 @@
             cmake
 
             # Linux desktop runner dependencies
-            cmake
             ninja
             clang
             pkg-config
