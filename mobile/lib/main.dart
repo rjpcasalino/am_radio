@@ -51,10 +51,20 @@ class AmRadioApp extends StatelessWidget {
       title: 'AM Radio',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF8B4513), // saddle-brown — vintage radio
-          brightness: Brightness.dark,
+        // Hand-crafted dark palette that evokes a vintage bakelite transistor radio.
+        colorScheme: const ColorScheme.dark(
+          surface: Color(0xFF1A0F00),       // dark bakelite body
+          primary: Color(0xFFE8A020),       // amber dial backlight
+          primaryContainer: Color(0xFF2E1A00),
+          onPrimary: Color(0xFF1A0F00),
+          onSurface: Color(0xFFF0E0B0),     // cream lettering
+          secondary: Color(0xFF4CAF50),     // green ON AIR lamp
+          onSecondary: Color(0xFF1A0F00),
+          tertiary: Color(0xFFFF6B35),      // warm signal-bar orange
+          onTertiary: Color(0xFF1A0F00),
         ),
+        scaffoldBackgroundColor: const Color(0xFF1A0F00),
+        fontFamily: 'monospace',
         useMaterial3: true,
       ),
       home: const HomeScreen(),
