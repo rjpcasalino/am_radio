@@ -60,6 +60,22 @@ class _HomeScreenState extends State<HomeScreen> {
   /// True when showing the default station list; false after a search.
   bool _isDefaultMode = true;
 
+  /// True while the inline search bar is visible.
+  bool _searchMode = false;
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   int _stationIndex(PlayerService player) {
@@ -114,45 +130,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _stations = List.of(_defaultStations);
       _isDefaultMode = true;
+      _searchMode = false;
+      _searchController.clear();
     });
-  }
-
-  // ── Search dialog ──────────────────────────────────────────────────────────
-
-  void _showSearchDialog() {
-    final controller = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Find Stations'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Search radio-browser.info…',
-            prefixIcon: Icon(Icons.search),
-          ),
-          onSubmitted: (value) {
-            Navigator.of(ctx).pop();
-            if (value.isNotEmpty) _findStations(value);
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final value = controller.text;
-              Navigator.of(ctx).pop();
-              if (value.isNotEmpty) _findStations(value);
-            },
-            child: const Text('Search'),
-          ),
-        ],
-      ),
-    );
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -170,7 +150,6 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildHeader(player),
             _buildDisplayPanel(player, currentIdx),
             Expanded(child: _buildMiddle(player, currentIdx)),
-            _buildBottomControls(player, currentIdx),
           ],
         ),
       ),
@@ -276,37 +255,141 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── C + D. Frequency dial + presets (default mode) ─────────────────────────
+  // ── C + D. Search bar / tune row + content + transport controls ───────────
 
   Widget _buildMiddle(PlayerService player, int currentIdx) {
-    return _isDefaultMode
-        ? _buildDialView(player, currentIdx)
-        : _buildSearchResults(player);
-  }
-
-  Widget _buildDialView(PlayerService player, int currentIdx) {
-    final dialIndex = currentIdx >= 0 ? currentIdx : 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.only(left: 20),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'TUNE',
-              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+        _buildSearchOrTuneRow(),
+        Expanded(
+          child: _isDefaultMode
+              ? _buildDialContent(player, currentIdx)
+              : _buildSearchResults(player),
+        ),
+        _buildTransportControls(player, currentIdx),
+      ],
+    );
+  }
+
+  // ── Inline search bar or TUNE label row ───────────────────────────────────
+
+  Widget _buildSearchOrTuneRow() {
+    final bool showSearchBar = _searchMode || !_isDefaultMode;
+
+    if (showSearchBar) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                // Only autofocus when the bar first opens (default mode).
+                // After results are showing we must not steal focus again.
+                autofocus: _searchMode && _isDefaultMode,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  color: Color(0xFFF0E0B0),
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Search radio-browser.info…',
+                  hintStyle: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    color: Color(0xFF6B4400),
+                  ),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF0A0500),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(color: Color(0xFF4A2800)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(color: Color(0xFF4A2800)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFE8A020),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                textInputAction: TextInputAction.search,
+                onSubmitted: (v) {
+                  final q = v.trim();
+                  if (q.isNotEmpty) _findStations(q);
+                },
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.search, color: Color(0xFFE8A020)),
+              iconSize: 22,
+              tooltip: 'Search',
+              onPressed: () {
+                final q = _searchController.text.trim();
+                if (q.isNotEmpty) _findStations(q);
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Color(0xFF6B4400)),
+              iconSize: 20,
+              tooltip: 'Back to defaults',
+              onPressed: _resetToDefaults,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Default mode: TUNE label + find button
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
+      child: Row(
+        children: [
+          Text(
+            'TUNE',
+            style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () => setState(() => _searchMode = true),
+            icon: const Icon(
+              Icons.search,
+              size: 16,
+              color: Color(0xFF6B4400),
+            ),
+            label: Text(
+              'find',
+              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 1),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
-        ),
-        const SizedBox(height: 4),
-        _StationWheelPicker(
-          stations: _stations,
-          currentIndex: dialIndex,
-          onStationChanged: _playStation,
-        ),
-      ],
+        ],
+      ),
+    );
+  }
+
+  // ── Frequency dial (default station picker) ────────────────────────────────
+
+  Widget _buildDialContent(PlayerService player, int currentIdx) {
+    final dialIndex = currentIdx >= 0 ? currentIdx : 0;
+    return _StationWheelPicker(
+      stations: _stations,
+      currentIndex: dialIndex,
+      onStationChanged: _playStation,
     );
   }
 
@@ -329,15 +412,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── F. Bottom control strip ────────────────────────────────────────────────
+  // ── F. Transport controls (prev / stop / next) ────────────────────────────
 
-  Widget _buildBottomControls(PlayerService player, int currentIdx) {
+  Widget _buildTransportControls(PlayerService player, int currentIdx) {
     return ColoredBox(
       color: const Color(0xFF0A0500),
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -359,18 +442,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 enabled:
                     currentIdx >= 0 && currentIdx < _stations.length - 1,
                 onPressed: () => _playStation(currentIdx + 1),
-              ),
-              _ControlButton(
-                symbol: '↺',
-                label: 'defaults',
-                enabled: !_isDefaultMode,
-                onPressed: _resetToDefaults,
-              ),
-              _ControlButton(
-                symbol: '🔍',
-                label: 'find',
-                enabled: true,
-                onPressed: _showSearchDialog,
               ),
             ],
           ),
@@ -463,21 +534,24 @@ class _ControlButton extends StatelessWidget {
         : const Color(0xFF4A2800);
     return GestureDetector(
       onTap: enabled ? onPressed : null,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(symbol, style: TextStyle(fontSize: 18, color: color)),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 9,
-              color: color,
-              letterSpacing: 0.5,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(symbol, style: TextStyle(fontSize: 22, color: color)),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 9,
+                color: color,
+                letterSpacing: 0.5,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -739,7 +813,7 @@ class _StationWheelPickerState extends State<_StationWheelPicker> {
           painter: const _TuningNotchPainter(),
         ),
         SizedBox(
-          height: 130,
+          height: 180,
           child: PageView.builder(
             controller: _controller,
             itemCount: widget.stations.length,
