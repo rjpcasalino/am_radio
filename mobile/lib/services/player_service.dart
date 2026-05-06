@@ -21,12 +21,24 @@ class PlayerService extends ChangeNotifier {
   // iOS / Android: just_audio player and its playing-state subscription.
   AudioPlayer? _audioPlayer;
   StreamSubscription<bool>? _playingSub;
+  StreamSubscription<ProcessingState>? _processingSub;
+  StreamSubscription<IcyMetadata?>? _icySub;
 
   Station? _currentStation;
   bool _isPlaying = false;
+  bool _isBuffering = false;
+  String? _currentTrack;
 
   Station? get currentStation => _currentStation;
   bool get isPlaying => _isPlaying;
+
+  /// True while just_audio is connecting / buffering the stream.
+  /// Always false on Linux (mpv doesn't expose buffering state to us).
+  bool get isBuffering => _isBuffering;
+
+  /// The current song/track title from ICY stream metadata.
+  /// Null when stopped, not yet received, or on Linux (mpv).
+  String? get currentTrack => _currentTrack;
 
   /// Start playing [station].  Stops any currently playing stream first.
   Future<void> play(Station station) async {
@@ -64,6 +76,11 @@ class PlayerService extends ChangeNotifier {
       } else {
         // iOS / Android: use just_audio.
         _audioPlayer ??= AudioPlayer();
+
+        // Mark as buffering while the stream is being set up / connecting.
+        _isBuffering = true;
+        notifyListeners();
+
         await _audioPlayer!.setUrl(station.url);
         await _audioPlayer!.play();
 
@@ -72,6 +89,29 @@ class PlayerService extends ChangeNotifier {
         _playingSub = _audioPlayer!.playingStream.listen((isPlaying) {
           if (!isPlaying && _isPlaying) {
             _isPlaying = false;
+            _isBuffering = false;
+            notifyListeners();
+          }
+        });
+
+        // Track processing state so the UI can distinguish
+        // buffering/connecting from actively streaming audio.
+        await _processingSub?.cancel();
+        _processingSub = _audioPlayer!.processingStateStream.listen((state) {
+          final buffering = state == ProcessingState.loading ||
+              state == ProcessingState.buffering;
+          if (buffering != _isBuffering) {
+            _isBuffering = buffering;
+            notifyListeners();
+          }
+        });
+
+        // Receive ICY stream metadata (current song title) as it arrives.
+        await _icySub?.cancel();
+        _icySub = _audioPlayer!.icyMetadataStream.listen((meta) {
+          final title = meta?.info?.title;
+          if (title != _currentTrack) {
+            _currentTrack = title;
             notifyListeners();
           }
         });
@@ -86,22 +126,32 @@ class PlayerService extends ChangeNotifier {
 
   /// Stop the currently playing stream.
   Future<void> stop() async {
-    await _playingSub?.cancel();
-    _playingSub = null;
+    try {
+      await _playingSub?.cancel();
+      _playingSub = null;
+      await _processingSub?.cancel();
+      _processingSub = null;
+      await _icySub?.cancel();
+      _icySub = null;
 
-    if (_process != null) {
-      _process!.kill();
-      _process = null;
+      if (_process != null) {
+        _process!.kill();
+        _process = null;
+      }
+      await _audioPlayer?.stop();
+    } finally {
+      _isPlaying = false;
+      _isBuffering = false;
+      _currentTrack = null;
+      notifyListeners();
     }
-    await _audioPlayer?.stop();
-
-    _isPlaying = false;
-    notifyListeners();
   }
 
   @override
   void dispose() {
     _playingSub?.cancel();
+    _processingSub?.cancel();
+    _icySub?.cancel();
     _process?.kill();
     _audioPlayer?.dispose();
     super.dispose();
