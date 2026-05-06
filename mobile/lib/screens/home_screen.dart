@@ -258,9 +258,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     : (player.isBuffering
                         ? const _BlinkingText('… tuning in …')
                         : Text(
-                            player.isPlaying ? '◉ on air' : '',
+                            player.currentTrack ?? '',
                             style: _monoStyle(
-                              color: const Color(0xFF4CAF50),
+                              color: const Color(0xFFE8A020),
                             ),
                             overflow: TextOverflow.ellipsis,
                           )),
@@ -288,13 +288,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildDialView(PlayerService player, int currentIdx) {
     final dialIndex = currentIdx >= 0 ? currentIdx : 0;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // stretch so children fill the full width — required for
+      // WrapAlignment.center in _buildPresets to actually centre buttons.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 20, top: 10, bottom: 0),
-          child: Text(
-            'FREQUENCY',
-            style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'FREQUENCY',
+              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+            ),
           ),
         ),
         SizedBox(

@@ -22,10 +22,12 @@ class PlayerService extends ChangeNotifier {
   AudioPlayer? _audioPlayer;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<ProcessingState>? _processingSub;
+  StreamSubscription<IcyMetadata?>? _icySub;
 
   Station? _currentStation;
   bool _isPlaying = false;
   bool _isBuffering = false;
+  String? _currentTrack;
 
   Station? get currentStation => _currentStation;
   bool get isPlaying => _isPlaying;
@@ -33,6 +35,10 @@ class PlayerService extends ChangeNotifier {
   /// True while just_audio is connecting / buffering the stream.
   /// Always false on Linux (mpv doesn't expose buffering state to us).
   bool get isBuffering => _isBuffering;
+
+  /// The current song/track title from ICY stream metadata.
+  /// Null when stopped, not yet received, or on Linux (mpv).
+  String? get currentTrack => _currentTrack;
 
   /// Start playing [station].  Stops any currently playing stream first.
   Future<void> play(Station station) async {
@@ -99,6 +105,16 @@ class PlayerService extends ChangeNotifier {
             notifyListeners();
           }
         });
+
+        // Receive ICY stream metadata (current song title) as it arrives.
+        await _icySub?.cancel();
+        _icySub = _audioPlayer!.icyMetadataStream.listen((meta) {
+          final title = meta?.info?.title;
+          if (title != _currentTrack) {
+            _currentTrack = title;
+            notifyListeners();
+          }
+        });
       }
     } catch (e) {
       _isPlaying = false;
@@ -114,6 +130,8 @@ class PlayerService extends ChangeNotifier {
     _playingSub = null;
     await _processingSub?.cancel();
     _processingSub = null;
+    await _icySub?.cancel();
+    _icySub = null;
 
     if (_process != null) {
       _process!.kill();
@@ -123,6 +141,7 @@ class PlayerService extends ChangeNotifier {
 
     _isPlaying = false;
     _isBuffering = false;
+    _currentTrack = null;
     notifyListeners();
   }
 
@@ -130,6 +149,7 @@ class PlayerService extends ChangeNotifier {
   void dispose() {
     _playingSub?.cancel();
     _processingSub?.cancel();
+    _icySub?.cancel();
     _process?.kill();
     _audioPlayer?.dispose();
     super.dispose();
