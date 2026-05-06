@@ -126,23 +126,25 @@ class PlayerService extends ChangeNotifier {
 
   /// Stop the currently playing stream.
   Future<void> stop() async {
-    await _playingSub?.cancel();
-    _playingSub = null;
-    await _processingSub?.cancel();
-    _processingSub = null;
-    await _icySub?.cancel();
-    _icySub = null;
+    try {
+      await _playingSub?.cancel();
+      _playingSub = null;
+      await _processingSub?.cancel();
+      _processingSub = null;
+      await _icySub?.cancel();
+      _icySub = null;
 
-    if (_process != null) {
-      _process!.kill();
-      _process = null;
+      if (_process != null) {
+        _process!.kill();
+        _process = null;
+      }
+      await _audioPlayer?.stop();
+    } finally {
+      _isPlaying = false;
+      _isBuffering = false;
+      _currentTrack = null;
+      notifyListeners();
     }
-    await _audioPlayer?.stop();
-
-    _isPlaying = false;
-    _isBuffering = false;
-    _currentTrack = null;
-    notifyListeners();
   }
 
   @override

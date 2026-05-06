@@ -257,12 +257,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? const _BlinkingText('… searching …')
                     : (player.isBuffering
                         ? const _BlinkingText('… tuning in …')
-                        : Text(
-                            player.currentTrack ?? '',
+                        : _MarqueeText(
+                            text: player.currentTrack ?? '',
                             style: _monoStyle(
                               color: const Color(0xFFE8A020),
                             ),
-                            overflow: TextOverflow.ellipsis,
                           )),
               ),
               const SizedBox(width: 8),
@@ -288,62 +287,26 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildDialView(PlayerService player, int currentIdx) {
     final dialIndex = currentIdx >= 0 ? currentIdx : 0;
     return Column(
-      // stretch so children fill the full width — required for
-      // WrapAlignment.center in _buildPresets to actually centre buttons.
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const SizedBox(height: 8),
         Padding(
-          padding: const EdgeInsets.only(left: 20, top: 10, bottom: 0),
+          padding: const EdgeInsets.only(left: 20),
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'FREQUENCY',
+              'TUNE',
               style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
             ),
           ),
         ),
-        SizedBox(
-          height: 90,
-          child: FrequencyDial(
-            stationCount: _stations.length,
-            currentIndex: dialIndex,
-            stationNames: _stations.map((s) => s.name).toList(),
-            onStationChanged: _playStation,
-          ),
-        ),
-        const SizedBox(height: 14),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Center(
-            child: Text(
-              'PRESETS',
-              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: _buildPresets(player),
+        const SizedBox(height: 4),
+        _StationWheelPicker(
+          stations: _stations,
+          currentIndex: dialIndex,
+          onStationChanged: _playStation,
         ),
       ],
-    );
-  }
-
-  Widget _buildPresets(PlayerService player) {
-    final count = _stations.length.clamp(0, 9);
-    if (count == 0) return const SizedBox.shrink();
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      alignment: WrapAlignment.center,
-      children: List.generate(count, (i) {
-        final isActive = player.currentStation?.url == _stations[i].url;
-        return _PresetButton(
-          number: i + 1,
-          isActive: isActive,
-          onPressed: () => _playStation(i),
-        );
-      }),
     );
   }
 
@@ -470,54 +433,6 @@ class _LoFiToggle extends StatelessWidget {
                   ? const Color(0xFFE8A020)
                   : const Color(0xFF6B4400),
               letterSpacing: 1,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Preset number button ───────────────────────────────────────────────────
-
-class _PresetButton extends StatelessWidget {
-  final int number;
-  final bool isActive;
-  final VoidCallback onPressed;
-
-  const _PresetButton({
-    required this.number,
-    required this.isActive,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: 38,
-        height: 38,
-        decoration: BoxDecoration(
-          color:
-              isActive ? const Color(0xFFE8A020) : const Color(0xFF2E1A00),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: isActive
-                ? const Color(0xFFE8A020)
-                : const Color(0xFF4A2800),
-          ),
-        ),
-        child: Center(
-          child: Text(
-            '$number',
-            style: TextStyle(
-              fontFamily: 'monospace',
-              color: isActive
-                  ? const Color(0xFF1A0F00)
-                  : const Color(0xFFF0E0B0),
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
             ),
           ),
         ),
@@ -679,3 +594,314 @@ class _StationTile extends StatelessWidget {
   }
 }
 
+// ── Auto-scrolling (marquee) text ──────────────────────────────────────────
+
+// Milliseconds of scroll animation per pixel of overflow.
+const _kScrollMsPerPixel = 30;
+
+class _MarqueeText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+
+  const _MarqueeText({required this.text, required this.style});
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText> {
+  final ScrollController _scroll = ScrollController();
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleScroll());
+  }
+
+  void _scheduleScroll() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(seconds: 2), _doScroll);
+  }
+
+  Future<void> _doScroll() async {
+    if (!mounted || !_scroll.hasClients) return;
+    final max = _scroll.position.maxScrollExtent;
+    if (max <= 0) return; // text fits — nothing to scroll
+    await _scroll.animateTo(
+      max,
+      duration: Duration(milliseconds: (max * _kScrollMsPerPixel).round()),
+      curve: Curves.linear,
+    );
+    if (!mounted) return;
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+    _scroll.jumpTo(0);
+    _scheduleScroll();
+  }
+
+  @override
+  void didUpdateWidget(_MarqueeText old) {
+    super.didUpdateWidget(old);
+    if (old.text != widget.text) {
+      _timer?.cancel();
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleScroll());
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _scroll,
+      scrollDirection: Axis.horizontal,
+      physics: const NeverScrollableScrollPhysics(),
+      child: Text(widget.text, style: widget.style, maxLines: 1),
+    );
+  }
+}
+
+// ── Touch-friendly station wheel picker ───────────────────────────────────
+
+// Minimum opacity for off-centre station cards in the wheel.
+const _kMinCardOpacity = 0.38;
+
+class _StationWheelPicker extends StatefulWidget {
+  final List<Station> stations;
+  final int currentIndex;
+  final ValueChanged<int> onStationChanged;
+
+  const _StationWheelPicker({
+    required this.stations,
+    required this.currentIndex,
+    required this.onStationChanged,
+  });
+
+  @override
+  State<_StationWheelPicker> createState() => _StationWheelPickerState();
+}
+
+class _StationWheelPickerState extends State<_StationWheelPicker> {
+  late PageController _controller;
+  late int _displayIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayIndex = widget.stations.isEmpty
+        ? 0
+        : widget.currentIndex.clamp(0, widget.stations.length - 1);
+    _controller = PageController(
+      initialPage: _displayIndex,
+      viewportFraction: 0.65,
+    );
+  }
+
+  @override
+  void didUpdateWidget(_StationWheelPicker old) {
+    super.didUpdateWidget(old);
+    if (widget.stations.isEmpty) return;
+    final newIdx = widget.currentIndex.clamp(0, widget.stations.length - 1);
+    if (newIdx != _displayIndex) {
+      _displayIndex = newIdx;
+      if (_controller.hasClients) {
+        _controller.animateToPage(
+          newIdx,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.stations.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Centre notch / tuning pointer
+        CustomPaint(
+          size: const Size(double.infinity, 10),
+          painter: const _TuningNotchPainter(),
+        ),
+        SizedBox(
+          height: 130,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: widget.stations.length,
+            onPageChanged: (i) {
+              setState(() => _displayIndex = i);
+              widget.onStationChanged(i);
+            },
+            itemBuilder: (_, i) => AnimatedBuilder(
+              animation: _controller,
+              builder: (_, child) {
+                final page = _controller.hasClients
+                    ? (_controller.page ?? i.toDouble())
+                    : i.toDouble();
+                final delta = (page - i).abs().clamp(0.0, 1.0);
+                final scale = 1.0 - delta * 0.28;
+                final opacity = 1.0 - delta * 0.62;
+                return Transform.scale(
+                  scale: scale,
+                  child: Opacity(opacity: opacity.clamp(_kMinCardOpacity, 1.0), child: child),
+                );
+              },
+              child: _StationCard(
+                station: widget.stations[i],
+                number: i + 1,
+                isActive: i == _displayIndex,
+              ),
+            ),
+          ),
+        ),
+        // Swipe hint arrows
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 24),
+              child: Text(
+                _displayIndex > 0 ? '◀' : '',
+                style: const TextStyle(
+                  color: Color(0xFF6B4400),
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(right: 24),
+              child: Text(
+                _displayIndex < widget.stations.length - 1 ? '▶' : '',
+                style: const TextStyle(
+                  color: Color(0xFF6B4400),
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ── Individual station card inside the wheel ───────────────────────────────
+
+class _StationCard extends StatelessWidget {
+  final Station station;
+  final int number;
+  final bool isActive;
+
+  const _StationCard({
+    required this.station,
+    required this.number,
+    required this.isActive,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0500),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isActive
+              ? const Color(0xFFE8A020)
+              : const Color(0xFF3A1E00),
+          width: isActive ? 1.5 : 1,
+        ),
+        boxShadow: isActive
+            ? [
+                BoxShadow(
+                  color: const Color(0xFFE8A020).withOpacity(0.22),
+                  blurRadius: 16,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '$number',
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              color: Color(0xFF6B4400),
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              station.name,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 14,
+                color: isActive
+                    ? const Color(0xFFE8A020)
+                    : const Color(0xFFF0E0B0),
+                fontWeight:
+                    isActive ? FontWeight.bold : FontWeight.normal,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (station.genre != null && station.genre!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              station.genre!,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 10,
+                color: Color(0xFF6B4400),
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Tuning notch painter ───────────────────────────────────────────────────
+
+class _TuningNotchPainter extends CustomPainter {
+  const _TuningNotchPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final path = Path()
+      ..moveTo(cx - 5, 0)
+      ..lineTo(cx + 5, 0)
+      ..lineTo(cx, 9)
+      ..close();
+    canvas.drawPath(path, Paint()..color = const Color(0xFFE8A020));
+  }
+
+  @override
+  bool shouldRepaint(_TuningNotchPainter _) => false;
+}
