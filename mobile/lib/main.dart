@@ -5,12 +5,17 @@ import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
 import 'services/player_service.dart';
+import 'services/station_repository.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
   // Create PlayerService before runApp so signal handlers can reference it.
   // On Linux without a desktop environment Flutter's dispose() chain is never
   // invoked when the process is killed, so we must stop mpv ourselves here.
   final player = PlayerService();
+  final stations = StationRepository();
+  await stations.load();
 
   // Signal handlers are only meaningful on Linux (where mpv runs as a
   // subprocess).  iOS/Android apps are sandboxed — they don't receive POSIX
@@ -35,8 +40,11 @@ void main() {
   }
 
   runApp(
-    ChangeNotifierProvider.value(
-      value: player,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: player),
+        ChangeNotifierProvider.value(value: stations),
+      ],
       child: const AmRadioApp(),
     ),
   );

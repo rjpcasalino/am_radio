@@ -16,6 +16,8 @@ dependencies:
   # Audio playback on iOS / Android (AVFoundation on iOS, ExoPlayer on Android).
   # Not used on Linux where mpv is spawned directly as a subprocess.
   just_audio: ^0.10.5
+  # Persist saved stations across app restarts.
+  shared_preferences: ^2.3.5
 
 dev_dependencies:
   flutter_test:
