@@ -23,6 +23,7 @@ nix run .#deploy-android
 
 - `--release` — Build release APK instead of debug (default: debug)
 - `--screenshot-dir DIR` — Directory to save screenshot (default: current directory)
+- `--wait SECONDS` — Seconds to wait for app to render before screenshot (default: 10)
 - `--skip-build` — Skip the build step (useful if you just want to install an already-built APK)
 - `--help` — Show help message
 
@@ -34,6 +35,9 @@ nix run .#deploy-android
 
 # Deploy and save screenshot to specific directory
 ./deploy-android.sh --screenshot-dir ~/Pictures/app-screenshots
+
+# Wait longer for app to fully render (useful for slower devices)
+./deploy-android.sh --wait 15
 
 # Just install and screenshot (skip build)
 ./deploy-android.sh --skip-build
@@ -80,7 +84,15 @@ If you change the package name in `mobile/android/app/build.gradle`, update the 
 
 ### Screenshot Timing
 
-The script waits 5 seconds after launching the app before taking a screenshot. This gives the app time to fully render. Adjust the sleep duration in the `launch_app()` function if needed.
+The script waits 10 seconds after launching the app before taking a screenshot. This gives the app time to fully render, especially on first launch when Flutter needs to initialize.
+
+If you see a white screen in your screenshot, the app may need more time to render. Use the `--wait` option to increase the delay:
+
+```sh
+./deploy-android.sh --wait 15
+```
+
+You can also adjust the default `RENDER_DELAY` variable in the script if needed.
 
 ### Screenshot Naming
 
@@ -110,9 +122,21 @@ Error: Activity class ... does not exist
 
 **Solution:** The package name may have changed. Check `mobile/android/app/src/main/AndroidManifest.xml` and update the script's `package_name` variable.
 
-### Screenshot is black or empty
+### Screenshot is white, black, or empty
 
-**Solution:** Increase the sleep duration in the `launch_app()` function to give the app more time to render.
+```
+Screenshot shows white screen instead of app UI
+```
+
+**Cause:** The app needs more time to initialize and render, especially on first launch or slower devices.
+
+**Solution:** Use the `--wait` option to increase the render delay:
+
+```sh
+./deploy-android.sh --wait 15
+```
+
+For consistently slower devices, you can edit the `RENDER_DELAY` default in the script from 10 to a higher value.
 
 ## Future Enhancements
 

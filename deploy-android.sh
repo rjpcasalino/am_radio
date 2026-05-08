@@ -4,11 +4,13 @@ set -euo pipefail
 # deploy-android.sh — Build Flutter app, install on Android device, and capture screenshot
 #
 # Usage:
-#   ./deploy-android.sh [--release] [--screenshot-dir DIR]
+#   ./deploy-android.sh [--release] [--screenshot-dir DIR] [--wait SECONDS]
 #
 # Options:
 #   --release          Build release APK instead of debug (default: debug)
 #   --screenshot-dir   Directory to save screenshot (default: current directory)
+#   --wait SECONDS     Seconds to wait for app to render before screenshot (default: 10)
+#   --skip-build       Skip building the app
 #   --help             Show this help message
 
 # Colors for output
@@ -22,6 +24,7 @@ NC='\033[0m' # No Color
 BUILD_MODE="debug"
 SCREENSHOT_DIR="."
 SKIP_BUILD=false
+RENDER_DELAY=10  # seconds to wait for app to render before screenshot
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -37,6 +40,10 @@ while [[ $# -gt 0 ]]; do
         --skip-build)
             SKIP_BUILD=true
             shift
+            ;;
+        --wait)
+            RENDER_DELAY="$2"
+            shift 2
             ;;
         --help)
             grep "^#" "$0" | grep -v "#!/" | sed 's/^# //'
@@ -187,8 +194,8 @@ launch_app() {
     log_success "App launched"
 
     # Give the app time to fully render
-    log_info "Waiting for app to render (5 seconds)..."
-    sleep 5
+    log_info "Waiting for app to render (${RENDER_DELAY} seconds)..."
+    sleep "$RENDER_DELAY"
 }
 
 # Capture screenshot from device
