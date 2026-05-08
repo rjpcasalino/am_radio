@@ -29,7 +29,8 @@ use the `-f` flag to discover stations from [https://de1.api.radio-browser.info/
 ## Mobile App
 
 A Flutter mobile app for Android, iOS, and Linux desktop is available in the `mobile/` directory. See [mobile/README.md](mobile/README.md) for full documentation.
-![android](./am_raido_android.png)
+
+![android](./am_radio_android.png)
 
 ### Quick Deploy to Android
 
