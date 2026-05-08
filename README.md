@@ -1,6 +1,12 @@
+# am_radio
+
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+
+A command-line and mobile internet radio player with vintage AM radio aesthetics.
+
 Requires [`mpv`](https://mpv.io/)
 
-Example:
+## Example
 
 ```
 perl am_radio.pl -oi -s5                                     
@@ -46,4 +52,24 @@ nix run .#deploy-android
 
 The script builds the app, installs it on your device, launches it, and captures a screenshot automatically.
 
-???
+## License
+
+This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
+
+### Third-Party Dependencies
+
+This project uses several open-source dependencies:
+
+**Perl CLI (`am_radio.pl`):**
+- `mpv` (GPL/LGPL) - Media player, used as external program
+- `curl` - For API requests
+- `ffprobe` (LGPL) - For stream metadata
+
+**Flutter Mobile App:**
+- Flutter SDK (BSD-3-Clause)
+- `http` package (BSD-3-Clause)
+- `provider` package (MIT)
+- `just_audio` package (MIT)
+- `shared_preferences` package (BSD-3-Clause)
+
+All dependencies maintain compatible licenses for commercial distribution.
