@@ -168,11 +168,18 @@ install_app() {
 launch_app() {
     log_info "Launching app on device..."
 
-    # The package name and activity need to match the Flutter app configuration
-    # Default Flutter app uses com.example.app_name / com.example.am_radio
-    # We need to check the AndroidManifest.xml for the actual package name
-
+    # Try to find the package name from gradle files, fallback to default
     local package_name="com.example.am_radio"
+
+    if [ -f "mobile/android/app/build.gradle" ]; then
+        # Try to extract from build.gradle
+        local gradle_pkg=$(grep -E "^\s*namespace\s+" mobile/android/app/build.gradle | sed -E 's/.*namespace\s+"([^"]+)".*/\1/' || true)
+        if [ -n "$gradle_pkg" ]; then
+            package_name="$gradle_pkg"
+        fi
+    fi
+
+    log_info "Using package name: $package_name"
 
     # Start the main activity
     adb shell am start -n "$package_name/.MainActivity"
@@ -224,6 +231,12 @@ main() {
     echo "║  am_radio — Android Deployment & Screenshot Tool     ║"
     echo "╚═══════════════════════════════════════════════════════╝"
     echo ""
+
+    # Check we're in the right directory
+    if [ ! -f "flake.nix" ] || [ ! -d "mobile" ]; then
+        log_error "Must run from the repository root directory"
+        exit 1
+    fi
 
     check_prerequisites
     check_device
