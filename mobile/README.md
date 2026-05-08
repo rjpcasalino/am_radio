@@ -10,6 +10,29 @@ discovery API.
 - Live search via [radio-browser.info](https://de1.api.radio-browser.info)
 - Play / stop any stream
 - "Now playing" bar
+- **Custom ASCII art logo** — Vintage radio design matching the bakelite theme
+
+## App Icon
+
+The app uses a custom ASCII art logo featuring a vintage radio design:
+
+```
+   !
+ __║__
+[●─⊙─●]
+| A M |
+|≈≈≈≈≈|
+'-----'
+```
+
+The icon uses the app's vintage bakelite color palette (amber #E8A020 on dark brown #1A0F00).
+
+To regenerate the icon after making changes:
+```sh
+cd mobile
+nix develop ..#mobile
+./assets/generate_icons.sh
+```
 
 ---
 

@@ -1,0 +1,37 @@
+ASCII Art Logo Design for am_radio
+=====================================
+
+Concept: Vintage radio with antenna and speaker grille
+
+Option 1 - Simple Radio:
+  ___
+ [:::]
+ |AM |
+ |===|
+ '---'
+
+Option 2 - Radio with Antenna:
+    |
+  __|__
+ [_::_]
+ | AM |
+ |====|
+ '----'
+
+Option 3 - Radio with Dial (Selected):
+    !
+  __║__
+ [●─⊙─●]
+ | A M |
+ |≈≈≈≈≈|
+ '-----'
+
+The selected design features:
+- Antenna (!) at top
+- Radio body with dial (●─⊙─●)
+- "A M" text for AM Radio
+- Speaker grille pattern (≈≈≈≈≈)
+- Vintage bakelite style
+
+This will be rendered as a simple icon with amber/cream colors
+matching the app's vintage bakelite color palette.
