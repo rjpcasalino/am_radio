@@ -10,6 +10,26 @@ discovery API.
 - Live search via [radio-browser.info](https://de1.api.radio-browser.info)
 - Play / stop any stream
 - "Now playing" bar
+- **Custom logo** — Clean, minimalist vintage radio icon matching the bakelite theme
+
+## App Icon
+
+The app uses a clean graphical radio icon with these design elements:
+
+- Antenna with tip at top
+- Rounded rectangle radio body (vintage style)
+- Central tuning dial with pointer
+- "AM" text in bold
+- Horizontal speaker grille lines
+
+The icon uses the app's vintage bakelite color palette (amber #E8A020 on dark brown #1A0F00) and is designed to be clear and recognizable at all screen sizes.
+
+To regenerate the icon after making changes:
+```sh
+cd mobile
+nix develop ..#mobile
+./assets/generate_icons.sh
+```
 
 ---
 
@@ -213,6 +233,34 @@ xcrun xctrace list devices
 ---
 
 ## Running on Android (device via USB)
+
+### Quick Start: Automated Deployment
+
+For a one-command deployment to your Android device with automatic screenshot capture, use the provided automation script:
+
+```sh
+# From the repo root
+./deploy-android.sh
+
+# Or with Nix:
+nix run .#deploy-android
+
+# Build release version with custom screenshot directory
+./deploy-android.sh --release --screenshot-dir ~/Pictures
+```
+
+This script will:
+1. Build the Flutter APK (debug or release)
+2. Install it on your connected Android device
+3. Launch the app
+4. Capture a screenshot from the device
+5. Transfer the screenshot to your PC
+
+The script requires an Android device connected via USB with USB debugging enabled. See [manual setup instructions](#manual-setup-android) below for first-time device configuration.
+
+---
+
+### Manual Setup: Android
 
 ### Prerequisites
 

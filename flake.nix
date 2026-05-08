@@ -32,8 +32,22 @@
         };
         
         androidSdk = androidComposition.androidsdk;
+
+        # Create a deployment script for Android
+        deployAndroid = pkgs.writeShellScriptBin "deploy-android" ''
+          export PATH="${pkgs.lib.makeBinPath [ pkgs.flutter androidSdk pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.gnused ]}:$PATH"
+          export ANDROID_HOME="${androidSdk}/libexec/android-sdk"
+          export ANDROID_SDK_ROOT="${androidSdk}/libexec/android-sdk"
+          exec ${pkgs.bash}/bin/bash ${./deploy-android.sh} "$@"
+        '';
       in
       {
+        # Nix app for deploying to Android
+        apps.deploy-android = {
+          type = "app";
+          program = "${deployAndroid}/bin/deploy-android";
+        };
+
         devShells.default = pkgs.mkShell {
           name = "am-radio-cli";
           buildInputs = with pkgs; [

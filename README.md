@@ -26,4 +26,22 @@ Press Ctrl+C to stop playback.
 
 use the `-f` flag to discover stations from [https://de1.api.radio-browser.info/json/stations/search](https://de1.api.radio-browser.info/json/stations/search)
 
+## Mobile App
+
+A Flutter mobile app for Android, iOS, and Linux desktop is available in the `mobile/` directory. See [mobile/README.md](mobile/README.md) for full documentation.
+
+### Quick Deploy to Android
+
+Deploy the app to a connected Android device with automatic screenshot capture:
+
+```sh
+# From the repo root
+./deploy-android.sh
+
+# Or with Nix:
+nix run .#deploy-android
+```
+
+The script builds the app, installs it on your device, launches it, and captures a screenshot automatically.
+
 ???
