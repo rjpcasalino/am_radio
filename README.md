@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 
 
-Disclaimer: AI Agents / AI in general was used heavily to produce this code. Me, the human, hasn't read it all but it runs and works and has bugs that maybe more or less minor and perhaps aesthetic UX stuff only. I have my doubts but the bugs can be prompted away or hand coded away. Use caution and read the code and let me know.
+Disclaimer: AI Agents / AI in general was used heavily to produce this code. Me, the human, has read most it and it seems OK for slop. A nice Big Mac of slop but it runs and works and has bugs that maybe more or less minor and perhaps aesthetic UX stuff only. I have my doubts but the bugs can be prompted away or hand coded away. Use caution and read the code and let me know.
 
 A command-line and mobile internet radio player with vintage AM radio aesthetics.
 
