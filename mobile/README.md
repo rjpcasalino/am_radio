@@ -1,7 +1,7 @@
 # am_radio — mobile app
 
 A Flutter application that brings `am_radio.pl`'s internet radio player to
-Linux desktop and Android, using the same station list and radio-browser.info
+Linux desktop, Android, and iOS, using the same station list and radio-browser.info
 discovery API.
 
 ## Features
@@ -10,6 +10,18 @@ discovery API.
 - Live search via [radio-browser.info](https://de1.api.radio-browser.info)
 - Play / stop any stream
 - "Now playing" bar
+
+---
+
+## Quick Start — Deploy to Your Device
+
+Choose your platform:
+
+- **[iOS (iPhone)](#running-on-ios-iphone-via-usb-c)** — Requires macOS + Xcode + free Apple ID
+- **[Android](#running-on-android-device-via-usb)** — Requires Android SDK + USB debugging
+- **[Linux desktop](#running-on-linux)** — Requires mpv
+
+Each section includes complete setup instructions and optional steps for building release builds.
 
 ---
 
@@ -162,20 +174,151 @@ Add the `audio` background mode to `ios/Runner/Info.plist` inside `<dict>`:
 </array>
 ```
 
----
+### Step 7 (Optional) — Build a release IPA for distribution
 
-## Running on Android
-
-1. Add the Android SDK to your Nix shell (see the `flake.nix` comments) **or**
-   install it via Android Studio.
-2. Set `ANDROID_HOME` / `ANDROID_SDK_ROOT`.
-3. Enable USB debugging on your device, then:
+For a production build without debug overhead:
 
 ```sh
 cd mobile
-flutter create . --platforms android   # first time only
+
+# Build release IPA (requires signing with your Apple ID as configured in Step 4)
+flutter build ipa --release
+
+# The IPA will be at:
+# build/ios/ipa/am_radio.ipa
+```
+
+#### Install the release IPA on your device
+
+**Note:** Installing an IPA built with a free Apple ID requires Xcode. Apps signed with a free provisioning profile expire after 7 days and need to be reinstalled.
+
+```sh
+# Connect your iPhone via USB, then install via Xcode command line:
+cd mobile/ios
+xcodebuild -workspace Runner.xcworkspace \
+  -scheme Runner \
+  -configuration Release \
+  -destination 'platform=iOS,id=<your-device-udid>' \
+  -allowProvisioningUpdates \
+  install
+
+# To find your device UDID:
+flutter devices
+# or
+xcrun xctrace list devices
+```
+
+**Alternative:** Open `ios/Runner.xcworkspace` in Xcode, select your device from the device menu, and click the Run button with the Release scheme selected.
+
+---
+
+## Running on Android (device via USB)
+
+### Prerequisites
+
+| Requirement | Notes |
+|-------------|-------|
+| **Android SDK** | Install via Android Studio or add to Nix shell (see `flake.nix`) |
+| **Android device** running **Android 5.0+** (API 21+) | |
+| **USB cable** | |
+| **USB debugging enabled** | See setup steps below |
+
+### Step 1 — Install Android SDK and set environment variables
+
+#### Option A: Via Android Studio (recommended)
+
+1. Download and install [Android Studio](https://developer.android.com/studio)
+2. Open Android Studio → **Settings/Preferences → Appearance & Behavior → System Settings → Android SDK**
+3. Install at least one Android SDK platform (API 21+)
+4. Note the SDK location path
+
+#### Option B: Via Nix shell
+
+Add the Android SDK to your Nix shell — see comments in `flake.nix` at the repo root.
+
+#### Set environment variables
+
+```sh
+export ANDROID_HOME="$HOME/Android/Sdk"      # or your SDK path
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$PATH:$ANDROID_HOME/platform-tools"
+```
+
+Add these to your `~/.bashrc` or `~/.zshrc` to persist across sessions.
+
+### Step 2 — Enable USB debugging on your Android device
+
+1. **Settings → About phone** → Tap **Build number** 7 times to enable Developer options
+2. **Settings → System → Developer options** (or **Settings → Developer options**)
+3. Enable **USB debugging**
+4. Connect your device via USB
+5. On your device, accept the **"Allow USB debugging?"** prompt and check **"Always allow from this computer"**
+
+### Step 3 — Verify device connection
+
+```sh
+# Check that adb can see your device
+adb devices
+```
+
+You should see output like:
+```
+List of devices attached
+A1B2C3D4E5F6    device
+```
+
+If you see `unauthorized`, check your device for the USB debugging prompt.
+
+### Step 4 — Add the Android platform (first time only)
+
+```sh
+cd mobile
+flutter create . --platforms android
+```
+
+This generates the `android/` directory with the app configuration already set up for cleartext HTTP traffic (required for radio streams).
+
+### Step 5 — Install dependencies and run on device
+
+```sh
 flutter pub get
+
+# List connected devices to verify Flutter can see your phone
+flutter devices
+
+# Run on the connected Android device
 flutter run -d android
+
+# Or specify the device ID if multiple devices are connected
+flutter run -d <device-id-from-flutter-devices>
+```
+
+The app will be built, installed, and launched on your device. Hot reload is enabled by default — press `r` in the terminal to reload after making code changes.
+
+### Step 6 (Optional) — Build a release APK
+
+For a production build without debug overhead:
+
+```sh
+cd mobile
+
+# Build release APK
+flutter build apk --release
+
+# The APK will be at:
+# build/app/outputs/flutter-apk/app-release.apk
+```
+
+#### Install the release APK on your device
+
+```sh
+# Install via adb
+adb install build/app/outputs/flutter-apk/app-release.apk
+
+# Or transfer the APK to your device and install it manually:
+# 1. Copy app-release.apk to your device (via USB, email, etc.)
+# 2. On your device: tap the APK file and confirm installation
+# 3. You may need to enable "Install from unknown sources" in Settings
 ```
 
 ### Android cleartext HTTP
