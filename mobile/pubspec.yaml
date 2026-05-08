@@ -1,0 +1,38 @@
+name: am_radio
+description: Internet radio player for Android, iOS, and Linux.
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # HTTP client — used to query the radio-browser.info API
+  http: ^1.2.2
+  # State management
+  provider: ^6.1.2
+  # Audio playback on iOS / Android (AVFoundation on iOS, ExoPlayer on Android).
+  # Not used on Linux where mpv is spawned directly as a subprocess.
+  just_audio: ^0.10.5
+  # Persist saved stations across app restarts.
+  shared_preferences: ^2.3.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "#1A0F00"
+  adaptive_icon_foreground: "assets/icon.png"
