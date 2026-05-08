@@ -214,6 +214,34 @@ xcrun xctrace list devices
 
 ## Running on Android (device via USB)
 
+### Quick Start: Automated Deployment
+
+For a one-command deployment to your Android device with automatic screenshot capture, use the provided automation script:
+
+```sh
+# From the repo root
+./deploy-android.sh
+
+# Or with Nix:
+nix run .#deploy-android
+
+# Build release version with custom screenshot directory
+./deploy-android.sh --release --screenshot-dir ~/Pictures
+```
+
+This script will:
+1. Build the Flutter APK (debug or release)
+2. Install it on your connected Android device
+3. Launch the app
+4. Capture a screenshot from the device
+5. Transfer the screenshot to your PC
+
+The script requires an Android device connected via USB with USB debugging enabled. See [manual setup instructions](#manual-setup-android) below for first-time device configuration.
+
+---
+
+### Manual Setup: Android
+
 ### Prerequisites
 
 | Requirement | Notes |
