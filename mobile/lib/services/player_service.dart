@@ -42,12 +42,18 @@ class PlayerService extends ChangeNotifier {
   /// Null when stopped, not yet received, or on Linux (mpv).
   String? get currentTrack => _currentTrack;
 
-  /// Toggle the lo-fi AM filter (`highpass=300 Hz, lowpass=4500 Hz,
-  /// acompressor`), mirroring the `--af=lavfi=[…]` flag used by
-  /// `am_radio.pl`.  On Linux the filter is applied by restarting mpv
-  /// with the extra `--af` argument.  On Android/iOS just_audio does not
-  /// expose a matching EQ pipeline, so the toggle is a visual no-op for
-  /// audio but the state is still persisted for the UI.
+  /// Enables or disables the lo-fi AM filter (`highpass=300 Hz,
+  /// lowpass=4500 Hz, acompressor`), mirroring the
+  /// `--af=lavfi=[…]` flag used by `am_radio.pl`.
+  ///
+  /// On **Linux** the filter is applied by restarting mpv with the extra
+  /// `--af` argument, so the currently playing stream is briefly interrupted.
+  /// On **Android/iOS** `just_audio` (ExoPlayer/AVFoundation) does not expose
+  /// a matching audio-filter pipeline, so the toggle has no audible effect
+  /// on those platforms.
+  ///
+  /// [value] is the desired lo-fi state; no-op when it matches the current
+  /// state.
   Future<void> setLoFi(bool value) async {
     if (_loFi == value) return;
     _loFi = value;

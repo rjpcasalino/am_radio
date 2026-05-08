@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -10,7 +9,6 @@ import '../models/station.dart';
 import '../services/player_service.dart';
 import '../services/station_repository.dart';
 import '../widgets/frequency_dial.dart';
-import '../widgets/radio_knob.dart';
 import '../widgets/radio_logo.dart';
 import '../widgets/signal_meter.dart';
 
@@ -143,13 +141,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final player = context.watch<PlayerService>();
     final repo = context.watch<StationRepository>();
-    final wheelStations =
+    final stations =
         _isDefaultMode ? _effectiveStations(repo) : _stations;
-    final currentIdx = _isDefaultMode
-        ? wheelStations.indexWhere(
-            (s) => s.url == player.currentStation?.url)
-        : _stations.indexWhere(
-            (s) => s.url == player.currentStation?.url);
+    final currentIdx =
+        stations.indexWhere((s) => s.url == player.currentStation?.url);
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A0F00),
@@ -157,9 +152,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           children: [
             _buildHeader(),
-            _buildDisplayPanel(player, currentIdx, wheelStations),
-            Expanded(
-                child: _buildMiddle(player, currentIdx, wheelStations)),
+            _buildDisplayPanel(player, currentIdx, stations),
+            Expanded(child: _buildMiddle(player, currentIdx, stations)),
           ],
         ),
       ),
@@ -235,16 +229,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: _monoStyle(color: const Color(0xFF4CAF50)),
               ),
               Expanded(
-                child: _loading
-                    ? const _BlinkingText('… searching …')
-                    : (player.isBuffering
-                        ? const _BlinkingText('… tuning in …')
-                        : _MarqueeText(
-                            text: player.currentTrack ?? '',
-                            style: _monoStyle(
-                              color: const Color(0xFFE8A020),
-                            ),
-                          )),
+                child: player.isBuffering
+                    ? const _BlinkingText('… tuning in …')
+                    : _MarqueeText(
+                        text: player.currentTrack ?? '',
+                        style: _monoStyle(
+                          color: const Color(0xFFE8A020),
+                        ),
+                      ),
               ),
               const SizedBox(width: 8),
               SignalMeter(
@@ -258,20 +250,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── C + D. Search bar / tune row + content + knob controls ───────────────
+  // ── C. Search bar / tune label + station list + transport controls ────────
 
-  Widget _buildMiddle(PlayerService player, int currentIdx,
-      List<Station> wheelStations) {
+  Widget _buildMiddle(
+      PlayerService player, int currentIdx, List<Station> stations) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildSearchOrTuneRow(),
-        Expanded(
-          child: _isDefaultMode
-              ? _buildDialContent(player, currentIdx, wheelStations)
-              : _buildSearchResults(player),
-        ),
-        _buildKnobPanel(player, currentIdx, wheelStations),
+        Expanded(child: _buildStationList(player, stations)),
+        _buildTransportControls(player, currentIdx, stations),
       ],
     );
   }
@@ -386,35 +374,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Frequency dial (default station picker) ────────────────────────────────
+  // ── D. Unified vertical station list ─────────────────────────────────────
 
-  Widget _buildDialContent(
-      PlayerService player, int currentIdx, List<Station> wheelStations) {
-    final dialIndex =
-        currentIdx >= 0 ? currentIdx : 0;
-    return _StationWheelPicker(
-      stations: wheelStations,
-      currentIndex: dialIndex,
-      onStationChanged: (i) {
-        if (i >= 0 && i < wheelStations.length) {
-          context.read<PlayerService>().play(wheelStations[i]);
-        }
-      },
-    );
-  }
-
-  // ── E. Search results list ─────────────────────────────────────────────────
-
-  Widget _buildSearchResults(PlayerService player) {
-    if (_stations.isEmpty) {
+  Widget _buildStationList(PlayerService player, List<Station> stations) {
+    if (_loading) {
+      return const Center(
+        child: _BlinkingText('… searching …'),
+      );
+    }
+    if (stations.isEmpty) {
       return Center(
         child: Text('No stations found.', style: _monoStyle()),
       );
     }
     return ListView.builder(
-      itemCount: _stations.length,
+      itemCount: stations.length,
       itemBuilder: (context, index) {
-        final station = _stations[index];
+        final station = stations[index];
         final isPlaying =
             player.isPlaying && player.currentStation?.url == station.url;
         return _StationTile(station: station, isPlaying: isPlaying);
@@ -422,80 +398,47 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── F. Knob panel (TONE · ON/OFF · TUNE) ──────────────────────────────────
+  // ── E. Transport controls (◀  ■  ▶) ──────────────────────────────────────
 
-  Widget _buildKnobPanel(
-      PlayerService player, int currentIdx, List<Station> wheelStations) {
-    final n = wheelStations.length;
-    // TUNE knob: sweep indicator from ~8 o'clock (-5π/6) to ~4 o'clock (5π/6)
-    // based on current station position.
-    final tuneAngle = n <= 1
-        ? 0.0
-        : -5 * math.pi / 6 +
-            currentIdx.clamp(0, n - 1) * (5 * math.pi / 3) / (n - 1);
-
-    // ON/OFF (power) knob: 8 o'clock when stopped, 4 o'clock when playing.
-    final powerAngle = player.isPlaying ? 5 * math.pi / 6 : -5 * math.pi / 6;
-
-    // TONE (lo-fi) knob: same convention.
-    final toneAngle = player.loFi ? 5 * math.pi / 6 : -5 * math.pi / 6;
-
+  Widget _buildTransportControls(
+      PlayerService player, int currentIdx, List<Station> stations) {
     return ColoredBox(
       color: const Color(0xFF0A0500),
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              // TONE knob — lo-fi filter toggle
-              RadioKnob(
-                label: 'TONE',
-                size: 52,
-                isActive: player.loFi,
-                indicatorAngle: toneAngle,
-                onTap: () =>
-                    context.read<PlayerService>().setLoFi(!player.loFi),
+              _TransportButton(
+                symbol: '◀',
+                enabled: currentIdx > 0,
+                onPressed: () =>
+                    context.read<PlayerService>().play(stations[currentIdx - 1]),
               ),
-              // ON/OFF knob — stop / play current station
-              RadioKnob(
-                label: 'ON · OFF',
-                size: 64,
-                isActive: player.isPlaying,
-                indicatorAngle: powerAngle,
-                enabled: currentIdx >= 0 || player.isPlaying,
-                onTap: () {
+              _TransportButton(
+                symbol: '■',
+                enabled: stations.isNotEmpty,
+                onPressed: () {
                   final ps = context.read<PlayerService>();
                   if (ps.isPlaying) {
                     ps.stop();
-                  } else if (currentIdx >= 0) {
-                    ps.play(wheelStations[currentIdx]);
-                  } else if (wheelStations.isNotEmpty) {
-                    ps.play(wheelStations[0]);
+                  } else {
+                    // Play the first station (or re-play the last tuned one).
+                    final target = currentIdx >= 0
+                        ? stations[currentIdx]
+                        : stations[0];
+                    ps.play(target);
                   }
                 },
               ),
-              // TUNE knob — drag to change station; the wheel above handles
-              // swipe navigation too, so the knob primarily serves as a visual
-              // indicator of the current tuning position.
-              GestureDetector(
-                onHorizontalDragEnd: (d) {
-                  final v = d.primaryVelocity ?? 0;
-                  final ps = context.read<PlayerService>();
-                  if (v > 100 && currentIdx > 0) {
-                    ps.play(wheelStations[currentIdx - 1]);
-                  } else if (v < -100 && currentIdx < n - 1) {
-                    ps.play(wheelStations[currentIdx + 1]);
-                  }
-                },
-                child: RadioKnob(
-                  label: 'TUNE',
-                  size: 52,
-                  isActive: false,
-                  indicatorAngle: tuneAngle,
-                  enabled: n > 0,
-                ),
+              _TransportButton(
+                symbol: '▶',
+                enabled:
+                    currentIdx >= 0 && currentIdx < stations.length - 1,
+                onPressed: () =>
+                    context.read<PlayerService>().play(stations[currentIdx + 1]),
               ),
             ],
           ),
@@ -731,250 +674,34 @@ class _MarqueeTextState extends State<_MarqueeText> {
   }
 }
 
-// ── Touch-friendly station wheel picker ───────────────────────────────────
+// ── Transport button (◀  ■  ▶) ────────────────────────────────────────────
 
-// Minimum opacity for off-centre station cards in the wheel.
-const _kMinCardOpacity = 0.38;
+class _TransportButton extends StatelessWidget {
+  final String symbol;
+  final bool enabled;
+  final VoidCallback onPressed;
 
-class _StationWheelPicker extends StatefulWidget {
-  final List<Station> stations;
-  final int currentIndex;
-  final ValueChanged<int> onStationChanged;
-
-  const _StationWheelPicker({
-    required this.stations,
-    required this.currentIndex,
-    required this.onStationChanged,
-  });
-
-  @override
-  State<_StationWheelPicker> createState() => _StationWheelPickerState();
-}
-
-class _StationWheelPickerState extends State<_StationWheelPicker> {
-  late PageController _controller;
-  late int _displayIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _displayIndex = widget.stations.isEmpty
-        ? 0
-        : widget.currentIndex.clamp(0, widget.stations.length - 1);
-    _controller = PageController(
-      initialPage: _displayIndex,
-      viewportFraction: 0.65,
-    );
-  }
-
-  @override
-  void didUpdateWidget(_StationWheelPicker old) {
-    super.didUpdateWidget(old);
-    if (widget.stations.isEmpty) return;
-    final newIdx = widget.currentIndex.clamp(0, widget.stations.length - 1);
-    if (newIdx != _displayIndex) {
-      _displayIndex = newIdx;
-      if (_controller.hasClients) {
-        _controller.animateToPage(
-          newIdx,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.stations.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Centre notch / tuning pointer
-        CustomPaint(
-          size: const Size(double.infinity, 10),
-          painter: const _TuningNotchPainter(),
-        ),
-        SizedBox(
-          height: 180,
-          child: PageView.builder(
-            controller: _controller,
-            itemCount: widget.stations.length,
-            onPageChanged: (i) {
-              setState(() => _displayIndex = i);
-              widget.onStationChanged(i);
-            },
-            itemBuilder: (_, i) => AnimatedBuilder(
-              animation: _controller,
-              builder: (_, child) {
-                final page = _controller.hasClients
-                    ? (_controller.page ?? i.toDouble())
-                    : i.toDouble();
-                final delta = (page - i).abs().clamp(0.0, 1.0);
-                final scale = 1.0 - delta * 0.28;
-                final opacity = 1.0 - delta * 0.62;
-                return Transform.scale(
-                  scale: scale,
-                  child: Opacity(opacity: opacity.clamp(_kMinCardOpacity, 1.0), child: child),
-                );
-              },
-              child: _StationCard(
-                station: widget.stations[i],
-                number: i + 1,
-                isActive: i == _displayIndex,
-              ),
-            ),
-          ),
-        ),
-        // Swipe hints are intentionally omitted — the wheel itself
-        // communicates scrollability through the faded side cards.
-      ],
-    );
-  }
-}
-
-// ── Individual station card inside the wheel ───────────────────────────────
-
-class _StationCard extends StatelessWidget {
-  final Station station;
-  final int number;
-  final bool isActive;
-
-  const _StationCard({
-    required this.station,
-    required this.number,
-    required this.isActive,
+  const _TransportButton({
+    required this.symbol,
+    required this.enabled,
+    required this.onPressed,
   });
 
   @override
   Widget build(BuildContext context) {
-    final repo = context.watch<StationRepository>();
-    final saved = repo.isSaved(station);
-
     return GestureDetector(
-      onLongPress: saved
-          ? () {
-              repo.remove(station);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    '${station.name} removed from saved stations',
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            }
-          : null,
-      child: Stack(
-        children: [
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0A0500),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isActive
-                    ? const Color(0xFFE8A020)
-                    : const Color(0xFF3A1E00),
-                width: isActive ? 1.5 : 1,
-              ),
-              boxShadow: isActive
-                  ? [
-                      BoxShadow(
-                        color: const Color(0xFFE8A020).withOpacity(0.22),
-                        blurRadius: 16,
-                        spreadRadius: 1,
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '$number',
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: Color(0xFF6B4400),
-                    letterSpacing: 2,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Text(
-                    station.name,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 14,
-                      color: isActive
-                          ? const Color(0xFFE8A020)
-                          : const Color(0xFFF0E0B0),
-                      fontWeight:
-                          isActive ? FontWeight.bold : FontWeight.normal,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (station.genre != null && station.genre!.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    station.genre!,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 10,
-                      color: Color(0xFF6B4400),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ],
-            ),
+      onTap: enabled ? onPressed : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        child: Text(
+          symbol,
+          style: TextStyle(
+            fontSize: 22,
+            color:
+                enabled ? const Color(0xFFF0E0B0) : const Color(0xFF4A2800),
           ),
-          // Saved star badge in top-right corner of card
-          if (saved)
-            const Positioned(
-              top: 10,
-              right: 12,
-              child: Icon(
-                Icons.star,
-                size: 11,
-                color: Color(0xFFE8A020),
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }
-}
-
-// ── Tuning notch painter ───────────────────────────────────────────────────
-
-class _TuningNotchPainter extends CustomPainter {
-  const _TuningNotchPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final path = Path()
-      ..moveTo(cx - 5, 0)
-      ..lineTo(cx + 5, 0)
-      ..lineTo(cx, 9)
-      ..close();
-    canvas.drawPath(path, Paint()..color = const Color(0xFFE8A020));
-  }
-
-  @override
-  bool shouldRepaint(_TuningNotchPainter _) => false;
 }
