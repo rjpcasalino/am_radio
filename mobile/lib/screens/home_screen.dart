@@ -7,8 +7,8 @@ import 'package:provider/provider.dart';
 
 import '../models/station.dart';
 import '../services/player_service.dart';
+import '../services/station_repository.dart';
 import '../widgets/frequency_dial.dart';
-import '../widgets/on_air_lamp.dart';
 import '../widgets/radio_logo.dart';
 import '../widgets/signal_meter.dart';
 
@@ -55,23 +55,27 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<Station> _stations = List.of(_defaultStations);
   bool _loading = false;
-  bool _loFi = false;
 
   /// True when showing the default station list; false after a search.
   bool _isDefaultMode = true;
 
+  /// True while the inline search bar is visible.
+  bool _searchMode = false;
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
-
-  int _stationIndex(PlayerService player) {
-    if (player.currentStation == null) return -1;
-    return _stations.indexWhere((s) => s.url == player.currentStation!.url);
-  }
-
-  void _playStation(int index) {
-    if (index >= 0 && index < _stations.length) {
-      context.read<PlayerService>().play(_stations[index]);
-    }
-  }
 
   // ── Radio-browser.info search ──────────────────────────────────────────────
 
@@ -114,45 +118,21 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _stations = List.of(_defaultStations);
       _isDefaultMode = true;
+      _searchMode = false;
+      _searchController.clear();
     });
   }
 
-  // ── Search dialog ──────────────────────────────────────────────────────────
-
-  void _showSearchDialog() {
-    final controller = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Find Stations'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Search radio-browser.info…',
-            prefixIcon: Icon(Icons.search),
-          ),
-          onSubmitted: (value) {
-            Navigator.of(ctx).pop();
-            if (value.isNotEmpty) _findStations(value);
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final value = controller.text;
-              Navigator.of(ctx).pop();
-              if (value.isNotEmpty) _findStations(value);
-            },
-            child: const Text('Search'),
-          ),
-        ],
-      ),
-    );
+  /// Stations shown in the wheel: saved stations merged with defaults
+  /// (deduped by URL), so user-saved stations appear at the top.
+  List<Station> _effectiveStations(StationRepository repo) {
+    final saved = repo.saved;
+    final seen = <String>{};
+    final merged = <Station>[];
+    for (final s in [...saved, ..._defaultStations]) {
+      if (seen.add(s.url)) merged.add(s);
+    }
+    return merged;
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -160,17 +140,20 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final player = context.watch<PlayerService>();
-    final currentIdx = _stationIndex(player);
+    final repo = context.watch<StationRepository>();
+    final stations =
+        _isDefaultMode ? _effectiveStations(repo) : _stations;
+    final currentIdx =
+        stations.indexWhere((s) => s.url == player.currentStation?.url);
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A0F00),
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(player),
-            _buildDisplayPanel(player, currentIdx),
-            Expanded(child: _buildMiddle(player, currentIdx)),
-            _buildBottomControls(player, currentIdx),
+            _buildHeader(),
+            _buildDisplayPanel(player, currentIdx, stations),
+            Expanded(child: _buildMiddle(player, currentIdx, stations)),
           ],
         ),
       ),
@@ -179,27 +162,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── A. Header / brand strip ────────────────────────────────────────────────
 
-  Widget _buildHeader(PlayerService player) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-      child: Row(
-        children: [
-          OnAirLamp(isOn: player.isPlaying),
-          const Expanded(child: Center(child: RadioLogo(width: 90))),
-          _LoFiToggle(
-            isOn: _loFi,
-            onToggle: () => setState(() => _loFi = !_loFi),
-          ),
-        ],
-      ),
+  Widget _buildHeader() {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Center(child: RadioLogo(width: 90)),
     );
   }
 
   // ── B. Dial display panel ──────────────────────────────────────────────────
 
-  Widget _buildDisplayPanel(PlayerService player, int currentIdx) {
+  Widget _buildDisplayPanel(
+      PlayerService player, int currentIdx, List<Station> wheelStations) {
     final freq = currentIdx >= 0
-        ? fakeFreqKHz(currentIdx, _stations.length)
+        ? fakeFreqKHz(currentIdx, wheelStations.length)
         : 1020;
 
     return Container(
@@ -223,13 +198,14 @@ class _HomeScreenState extends State<HomeScreen> {
           // Station name row
           Row(
             children: [
-              Text(
-                '► ',
-                style: _monoStyle(
-                  color: const Color(0xFFE8A020),
-                  bold: true,
-                ),
+              Icon(
+                player.isPlaying ? Icons.radio : Icons.radio_outlined,
+                size: 14,
+                color: player.isPlaying
+                    ? const Color(0xFFE8A020)
+                    : const Color(0xFF6B4400),
               ),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   player.currentStation?.name ?? '─── off air ───',
@@ -253,16 +229,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: _monoStyle(color: const Color(0xFF4CAF50)),
               ),
               Expanded(
-                child: _loading
-                    ? const _BlinkingText('… searching …')
-                    : (player.isBuffering
-                        ? const _BlinkingText('… tuning in …')
-                        : _MarqueeText(
-                            text: player.currentTrack ?? '',
-                            style: _monoStyle(
-                              color: const Color(0xFFE8A020),
-                            ),
-                          )),
+                child: player.isBuffering
+                    ? const _BlinkingText('… tuning in …')
+                    : _MarqueeText(
+                        text: player.currentTrack ?? '',
+                        style: _monoStyle(
+                          color: const Color(0xFFE8A020),
+                        ),
+                      ),
               ),
               const SizedBox(width: 8),
               SignalMeter(
@@ -276,52 +250,147 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── C + D. Frequency dial + presets (default mode) ─────────────────────────
+  // ── C. Search bar / tune label + station list + transport controls ────────
 
-  Widget _buildMiddle(PlayerService player, int currentIdx) {
-    return _isDefaultMode
-        ? _buildDialView(player, currentIdx)
-        : _buildSearchResults(player);
-  }
-
-  Widget _buildDialView(PlayerService player, int currentIdx) {
-    final dialIndex = currentIdx >= 0 ? currentIdx : 0;
+  Widget _buildMiddle(
+      PlayerService player, int currentIdx, List<Station> stations) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.only(left: 20),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'TUNE',
-              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        _StationWheelPicker(
-          stations: _stations,
-          currentIndex: dialIndex,
-          onStationChanged: _playStation,
-        ),
+        _buildSearchOrTuneRow(),
+        Expanded(child: _buildStationList(player, stations)),
+        _buildTransportControls(player, currentIdx, stations),
       ],
     );
   }
 
-  // ── E. Search results list ─────────────────────────────────────────────────
+  // ── Inline search bar or TUNE label row ───────────────────────────────────
 
-  Widget _buildSearchResults(PlayerService player) {
-    if (_stations.isEmpty) {
+  Widget _buildSearchOrTuneRow() {
+    final bool showSearchBar = _searchMode || !_isDefaultMode;
+
+    if (showSearchBar) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                // Only autofocus when the bar first opens (default mode).
+                // After results are showing we must not steal focus again.
+                autofocus: _searchMode && _isDefaultMode,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  color: Color(0xFFF0E0B0),
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Search radio-browser.info…',
+                  hintStyle: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    color: Color(0xFF6B4400),
+                  ),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF0A0500),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(color: Color(0xFF4A2800)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(color: Color(0xFF4A2800)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFE8A020),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                textInputAction: TextInputAction.search,
+                onSubmitted: (v) {
+                  final q = v.trim();
+                  if (q.isNotEmpty) _findStations(q);
+                },
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.search, color: Color(0xFFE8A020)),
+              iconSize: 22,
+              tooltip: 'Search',
+              onPressed: () {
+                final q = _searchController.text.trim();
+                if (q.isNotEmpty) _findStations(q);
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Color(0xFF6B4400)),
+              iconSize: 20,
+              tooltip: 'Back to defaults',
+              onPressed: _resetToDefaults,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Default mode: TUNE label + find button
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
+      child: Row(
+        children: [
+          Text(
+            'TUNE',
+            style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 2),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () => setState(() => _searchMode = true),
+            icon: const Icon(
+              Icons.search,
+              size: 16,
+              color: Color(0xFF6B4400),
+            ),
+            label: Text(
+              'find',
+              style: _monoStyle(dim: true, fontSize: 10, letterSpacing: 1),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── D. Unified vertical station list ─────────────────────────────────────
+
+  Widget _buildStationList(PlayerService player, List<Station> stations) {
+    if (_loading) {
+      return const Center(
+        child: _BlinkingText('… searching …'),
+      );
+    }
+    if (stations.isEmpty) {
       return Center(
         child: Text('No stations found.', style: _monoStyle()),
       );
     }
     return ListView.builder(
-      itemCount: _stations.length,
+      itemCount: stations.length,
       itemBuilder: (context, index) {
-        final station = _stations[index];
+        final station = stations[index];
         final isPlaying =
             player.isPlaying && player.currentStation?.url == station.url;
         return _StationTile(station: station, isPlaying: isPlaying);
@@ -329,48 +398,47 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── F. Bottom control strip ────────────────────────────────────────────────
+  // ── E. Transport controls (◀  ■  ▶) ──────────────────────────────────────
 
-  Widget _buildBottomControls(PlayerService player, int currentIdx) {
+  Widget _buildTransportControls(
+      PlayerService player, int currentIdx, List<Station> stations) {
     return ColoredBox(
       color: const Color(0xFF0A0500),
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _ControlButton(
+              _TransportButton(
                 symbol: '◀',
-                label: 'prev',
                 enabled: currentIdx > 0,
-                onPressed: () => _playStation(currentIdx - 1),
+                onPressed: () =>
+                    context.read<PlayerService>().play(stations[currentIdx - 1]),
               ),
-              _ControlButton(
+              _TransportButton(
                 symbol: '■',
-                label: 'stop',
-                enabled: player.isPlaying,
-                onPressed: () => context.read<PlayerService>().stop(),
+                enabled: stations.isNotEmpty,
+                onPressed: () {
+                  final ps = context.read<PlayerService>();
+                  if (ps.isPlaying) {
+                    ps.stop();
+                  } else {
+                    // Play the first station (or re-play the last tuned one).
+                    final target = currentIdx >= 0
+                        ? stations[currentIdx]
+                        : stations[0];
+                    ps.play(target);
+                  }
+                },
               ),
-              _ControlButton(
+              _TransportButton(
                 symbol: '▶',
-                label: 'next',
                 enabled:
-                    currentIdx >= 0 && currentIdx < _stations.length - 1,
-                onPressed: () => _playStation(currentIdx + 1),
-              ),
-              _ControlButton(
-                symbol: '↺',
-                label: 'defaults',
-                enabled: !_isDefaultMode,
-                onPressed: _resetToDefaults,
-              ),
-              _ControlButton(
-                symbol: '🔍',
-                label: 'find',
-                enabled: true,
-                onPressed: _showSearchDialog,
+                    currentIdx >= 0 && currentIdx < stations.length - 1,
+                onPressed: () =>
+                    context.read<PlayerService>().play(stations[currentIdx + 1]),
               ),
             ],
           ),
@@ -395,90 +463,6 @@ class _HomeScreenState extends State<HomeScreen> {
           (dim ? const Color(0xFF6B4400) : const Color(0xFFF0E0B0)),
       fontWeight: bold ? FontWeight.bold : FontWeight.normal,
       letterSpacing: letterSpacing,
-    );
-  }
-}
-
-// ── Lo-Fi toggle button ────────────────────────────────────────────────────
-
-class _LoFiToggle extends StatelessWidget {
-  final bool isOn;
-  final VoidCallback onToggle;
-
-  const _LoFiToggle({required this.isOn, required this.onToggle});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onToggle,
-      child: Opacity(
-        opacity: isOn ? 1.0 : 0.45,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: isOn
-                  ? const Color(0xFFE8A020)
-                  : const Color(0xFF4A2800),
-              width: 1,
-            ),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            'Lo-Fi',
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 10,
-              color: isOn
-                  ? const Color(0xFFE8A020)
-                  : const Color(0xFF6B4400),
-              letterSpacing: 1,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Bottom control strip button ────────────────────────────────────────────
-
-class _ControlButton extends StatelessWidget {
-  final String symbol;
-  final String label;
-  final bool enabled;
-  final VoidCallback onPressed;
-
-  const _ControlButton({
-    required this.symbol,
-    required this.label,
-    required this.enabled,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = enabled
-        ? const Color(0xFFF0E0B0)
-        : const Color(0xFF4A2800);
-    return GestureDetector(
-      onTap: enabled ? onPressed : null,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(symbol, style: TextStyle(fontSize: 18, color: color)),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 9,
-              color: color,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -543,6 +527,9 @@ class _StationTile extends StatelessWidget {
     const cream = Color(0xFFF0E0B0);
     const dim = Color(0xFF6B4400);
 
+    final repo = context.watch<StationRepository>();
+    final saved = repo.isSaved(station);
+
     return ListTile(
       leading: Icon(
         isPlaying ? Icons.radio : Icons.radio_outlined,
@@ -576,17 +563,36 @@ class _StationTile extends StatelessWidget {
                   ),
                 )
               : null),
-      trailing: isPlaying
-          ? IconButton(
-              icon: Icon(Icons.stop_circle_outlined, color: amber),
-              tooltip: 'Stop',
-              onPressed: () => context.read<PlayerService>().stop(),
-            )
-          : IconButton(
-              icon: Icon(Icons.play_circle_outline, color: dim),
-              tooltip: 'Play',
-              onPressed: () => context.read<PlayerService>().play(station),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Save / unsave toggle
+          IconButton(
+            icon: Icon(
+              saved ? Icons.star : Icons.star_border,
+              color: saved ? amber : dim,
+              size: 20,
             ),
+            tooltip: saved ? 'Unsave' : 'Save station',
+            onPressed: () => saved
+                ? context.read<StationRepository>().remove(station)
+                : context.read<StationRepository>().save(station),
+          ),
+          // Play / stop toggle
+          isPlaying
+              ? IconButton(
+                  icon: Icon(Icons.stop_circle_outlined, color: amber),
+                  tooltip: 'Stop',
+                  onPressed: () => context.read<PlayerService>().stop(),
+                )
+              : IconButton(
+                  icon: Icon(Icons.play_circle_outline, color: dim),
+                  tooltip: 'Play',
+                  onPressed: () =>
+                      context.read<PlayerService>().play(station),
+                ),
+        ],
+      ),
       onTap: () => isPlaying
           ? context.read<PlayerService>().stop()
           : context.read<PlayerService>().play(station),
@@ -668,240 +674,34 @@ class _MarqueeTextState extends State<_MarqueeText> {
   }
 }
 
-// ── Touch-friendly station wheel picker ───────────────────────────────────
+// ── Transport button (◀  ■  ▶) ────────────────────────────────────────────
 
-// Minimum opacity for off-centre station cards in the wheel.
-const _kMinCardOpacity = 0.38;
+class _TransportButton extends StatelessWidget {
+  final String symbol;
+  final bool enabled;
+  final VoidCallback onPressed;
 
-class _StationWheelPicker extends StatefulWidget {
-  final List<Station> stations;
-  final int currentIndex;
-  final ValueChanged<int> onStationChanged;
-
-  const _StationWheelPicker({
-    required this.stations,
-    required this.currentIndex,
-    required this.onStationChanged,
-  });
-
-  @override
-  State<_StationWheelPicker> createState() => _StationWheelPickerState();
-}
-
-class _StationWheelPickerState extends State<_StationWheelPicker> {
-  late PageController _controller;
-  late int _displayIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _displayIndex = widget.stations.isEmpty
-        ? 0
-        : widget.currentIndex.clamp(0, widget.stations.length - 1);
-    _controller = PageController(
-      initialPage: _displayIndex,
-      viewportFraction: 0.65,
-    );
-  }
-
-  @override
-  void didUpdateWidget(_StationWheelPicker old) {
-    super.didUpdateWidget(old);
-    if (widget.stations.isEmpty) return;
-    final newIdx = widget.currentIndex.clamp(0, widget.stations.length - 1);
-    if (newIdx != _displayIndex) {
-      _displayIndex = newIdx;
-      if (_controller.hasClients) {
-        _controller.animateToPage(
-          newIdx,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.stations.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Centre notch / tuning pointer
-        CustomPaint(
-          size: const Size(double.infinity, 10),
-          painter: const _TuningNotchPainter(),
-        ),
-        SizedBox(
-          height: 130,
-          child: PageView.builder(
-            controller: _controller,
-            itemCount: widget.stations.length,
-            onPageChanged: (i) {
-              setState(() => _displayIndex = i);
-              widget.onStationChanged(i);
-            },
-            itemBuilder: (_, i) => AnimatedBuilder(
-              animation: _controller,
-              builder: (_, child) {
-                final page = _controller.hasClients
-                    ? (_controller.page ?? i.toDouble())
-                    : i.toDouble();
-                final delta = (page - i).abs().clamp(0.0, 1.0);
-                final scale = 1.0 - delta * 0.28;
-                final opacity = 1.0 - delta * 0.62;
-                return Transform.scale(
-                  scale: scale,
-                  child: Opacity(opacity: opacity.clamp(_kMinCardOpacity, 1.0), child: child),
-                );
-              },
-              child: _StationCard(
-                station: widget.stations[i],
-                number: i + 1,
-                isActive: i == _displayIndex,
-              ),
-            ),
-          ),
-        ),
-        // Swipe hint arrows
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 24),
-              child: Text(
-                _displayIndex > 0 ? '◀' : '',
-                style: const TextStyle(
-                  color: Color(0xFF6B4400),
-                  fontSize: 13,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 24),
-              child: Text(
-                _displayIndex < widget.stations.length - 1 ? '▶' : '',
-                style: const TextStyle(
-                  color: Color(0xFF6B4400),
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-// ── Individual station card inside the wheel ───────────────────────────────
-
-class _StationCard extends StatelessWidget {
-  final Station station;
-  final int number;
-  final bool isActive;
-
-  const _StationCard({
-    required this.station,
-    required this.number,
-    required this.isActive,
+  const _TransportButton({
+    required this.symbol,
+    required this.enabled,
+    required this.onPressed,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0A0500),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isActive
-              ? const Color(0xFFE8A020)
-              : const Color(0xFF3A1E00),
-          width: isActive ? 1.5 : 1,
+    return GestureDetector(
+      onTap: enabled ? onPressed : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        child: Text(
+          symbol,
+          style: TextStyle(
+            fontSize: 22,
+            color:
+                enabled ? const Color(0xFFF0E0B0) : const Color(0xFF4A2800),
+          ),
         ),
-        boxShadow: isActive
-            ? [
-                BoxShadow(
-                  color: const Color(0xFFE8A020).withOpacity(0.22),
-                  blurRadius: 16,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '$number',
-            style: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 11,
-              color: Color(0xFF6B4400),
-              letterSpacing: 2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              station.name,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 14,
-                color: isActive
-                    ? const Color(0xFFE8A020)
-                    : const Color(0xFFF0E0B0),
-                fontWeight:
-                    isActive ? FontWeight.bold : FontWeight.normal,
-              ),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (station.genre != null && station.genre!.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              station.genre!,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 10,
-                color: Color(0xFF6B4400),
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ],
       ),
     );
   }
-}
-
-// ── Tuning notch painter ───────────────────────────────────────────────────
-
-class _TuningNotchPainter extends CustomPainter {
-  const _TuningNotchPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final path = Path()
-      ..moveTo(cx - 5, 0)
-      ..lineTo(cx + 5, 0)
-      ..lineTo(cx, 9)
-      ..close();
-    canvas.drawPath(path, Paint()..color = const Color(0xFFE8A020));
-  }
-
-  @override
-  bool shouldRepaint(_TuningNotchPainter _) => false;
 }
