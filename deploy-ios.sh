@@ -143,9 +143,11 @@ build_app() {
     cd mobile
 
     # Flutter rewrites ios/Flutter/Debug.xcconfig and Release.xcconfig during
-    # pub get.  If git checked them out read-only (common on macOS), the write
-    # fails.  Ensure they are writable before proceeding.
+    # pub get, and CocoaPods rewrites ios/Runner.xcworkspace/contents.xcworkspacedata
+    # during pod install.  If git checked these out read-only (common on macOS),
+    # the write fails.  Ensure they are writable before proceeding.
     chmod u+w ios/Flutter/Debug.xcconfig ios/Flutter/Release.xcconfig 2>/dev/null || true
+    chmod u+w ios/Runner.xcworkspace/contents.xcworkspacedata 2>/dev/null || true
 
     flutter pub get
 
