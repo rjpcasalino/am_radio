@@ -151,6 +151,18 @@ build_app() {
 
     flutter pub get
 
+    # When running inside a Nix dev shell, environment variables such as
+    # NIX_LDFLAGS and NIX_CFLAGS_COMPILE inject GNU-ld flags (e.g.
+    # -dynamiclib, -isysroot, -rdynamic, -fobjc-arc) into every compiler and
+    # linker invocation.  Xcode's Apple-clang rejects these flags, causing the
+    # CocoaPods / Pods.xcodeproj build to fail with "Unknown options".
+    # Unset all Nix toolchain variables for the iOS build subprocess only.
+    unset NIX_LDFLAGS NIX_CFLAGS_COMPILE NIX_CC NIX_BINTOOLS \
+          NIX_CC_WRAPPER_TARGET_HOST NIX_BINTOOLS_WRAPPER_TARGET_HOST \
+          NIX_ENFORCE_NO_NATIVE NIX_HARDENING_ENABLE \
+          ZERO_AR_DATE MACOSX_DEPLOYMENT_TARGET_x86_64 \
+          MACOSX_DEPLOYMENT_TARGET_aarch64 2>/dev/null || true
+
     if [[ "$BUILD_MODE" == "release" ]]; then
         # Release builds need a signing identity; use --no-codesign for ad-hoc
         # local installs, then re-sign with Xcode if you have a developer account.
