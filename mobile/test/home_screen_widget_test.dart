@@ -1,23 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:am_radio/screens/home_screen.dart';
 import 'package:am_radio/services/player_service.dart';
 import 'package:am_radio/services/station_repository.dart';
+import 'package:am_radio/services/settings_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('HomeScreen', () {
     testWidgets('should render without crashing', (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+
       final playerService = PlayerService();
       final stationRepository = StationRepository();
+      final settingsService = SettingsService();
 
       await tester.pumpWidget(
         MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: playerService),
             ChangeNotifierProvider.value(value: stationRepository),
+            ChangeNotifierProvider.value(value: settingsService),
           ],
           child: const MaterialApp(
             home: HomeScreen(),
@@ -33,14 +39,18 @@ void main() {
     });
 
     testWidgets('should show transport controls', (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+
       final playerService = PlayerService();
       final stationRepository = StationRepository();
+      final settingsService = SettingsService();
 
       await tester.pumpWidget(
         MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: playerService),
             ChangeNotifierProvider.value(value: stationRepository),
+            ChangeNotifierProvider.value(value: settingsService),
           ],
           child: const MaterialApp(
             home: HomeScreen(),
@@ -59,14 +69,18 @@ void main() {
 
     testWidgets('should show "off air" when not playing',
         (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+
       final playerService = PlayerService();
       final stationRepository = StationRepository();
+      final settingsService = SettingsService();
 
       await tester.pumpWidget(
         MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: playerService),
             ChangeNotifierProvider.value(value: stationRepository),
+            ChangeNotifierProvider.value(value: settingsService),
           ],
           child: const MaterialApp(
             home: HomeScreen(),
@@ -83,14 +97,18 @@ void main() {
 
     testWidgets('should show TUNE label in default mode',
         (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+
       final playerService = PlayerService();
       final stationRepository = StationRepository();
+      final settingsService = SettingsService();
 
       await tester.pumpWidget(
         MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: playerService),
             ChangeNotifierProvider.value(value: stationRepository),
+            ChangeNotifierProvider.value(value: settingsService),
           ],
           child: const MaterialApp(
             home: HomeScreen(),
