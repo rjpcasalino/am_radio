@@ -54,19 +54,6 @@ Since you execute `mpv` and `ffprobe` as **separate processes** (not dynamically
 - No special licensing requirements for AI-generated content
 - Current law (US/EU as of 2026) treats AI as a tool, not an author
 
-**Transparency Options (Optional):**
-
-You could add a note to your README acknowledging AI assistance:
-
-```markdown
-## Development
-
-Parts of this codebase were developed with assistance from AI tools.
-All code is original work and is licensed under the BSD 3-Clause License.
-```
-
-This is **optional** but demonstrates transparency. There's no legal requirement to disclose AI usage.
-
 ### 4. **Radio Stream Content License**
 
 **Important:** Your app plays radio streams from third-party stations via radio-browser.info API.

@@ -4,7 +4,7 @@
 
 A command-line and mobile internet radio player with vintage AM radio aesthetics.
 
-**Disclaimer:** AI Agents / AI in general was used heavily to produce this code. Me, the human, has read most of it and it seems OK for slop. A nice Big Mac of slop but it runs and works and has bugs that maybe more or less minor and perhaps aesthetic UX stuff only. I have my doubts but the bugs can be prompted away or hand coded away. Use caution and read the code and let me know.
+**Disclaimer:** Parts of this codebase were developed with assistance from AI tools. All code is original work and is licensed under the BSD 3-Clause License. Me, the human, has read most of it and it seems OK for slop. A nice Big Mac of slop but it runs and works and has bugs that maybe more or less minor and perhaps aesthetic UX stuff only. I have my doubts but the bugs can be prompted away or hand coded away. Use caution and read the code and let me know.
 
 Requires [`mpv`](https://mpv.io/)
 
