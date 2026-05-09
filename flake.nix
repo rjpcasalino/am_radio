@@ -68,19 +68,21 @@
             jdk17 # Flutter currently prefers JDK 17
             cmake
 
-            # Linux desktop runner dependencies
+            # Audio/Tools
+            mpv
+            curl
+            git
+            jq
+          # Linux desktop runner dependencies — these packages' Nix setup hooks
+          # inject NIX_LDFLAGS / NIX_CC / NIX_BINTOOLS which Xcode's Apple linker
+          # rejects.  Only include them on Linux where they are actually needed.
+          ] ++ lib.optionals pkgs.stdenv.isLinux [
             ninja
             clang
             pkg-config
             gtk3
             glib
             pcre2
-
-            # Audio/Tools
-            mpv
-            curl
-            git
-            jq
           ];
 
           # 3. Export variables so Flutter/Gradle knows where things are
@@ -89,6 +91,9 @@
             ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
             ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/28.2.13676358";
             JAVA_HOME = pkgs.jdk17.home;
+          # google-chrome is only available via nixpkgs on Linux; on macOS use
+          # the system-installed Chrome.
+          } // lib.optionalAttrs pkgs.stdenv.isLinux {
             CHROME_EXECUTABLE = "${pkgs.google-chrome}/bin/google-chrome";
           };
 
@@ -101,7 +106,14 @@
             if [[ "$(uname)" == "Darwin" ]]; then
               export DEVELOPER_DIR="$(xcode-select -p 2>/dev/null || echo '/Applications/Xcode.app/Contents/Developer')"
               export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
-              unset SDKROOT
+              # Belt-and-suspenders: clear any residual Nix toolchain variables
+              # that would confuse Xcode / Apple ld.
+              unset SDKROOT NIX_LDFLAGS NIX_CFLAGS_COMPILE \
+                    NIX_CC NIX_BINTOOLS \
+                    NIX_CC_WRAPPER_TARGET_HOST \
+                    NIX_BINTOOLS_WRAPPER_TARGET_HOST \
+                    NIX_ENFORCE_NO_NATIVE NIX_HARDENING_ENABLE \
+                    ZERO_AR_DATE 2>/dev/null || true
             fi
 
             # Bootstrap Flutter platforms
