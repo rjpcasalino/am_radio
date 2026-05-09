@@ -45,10 +45,6 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
-    # Only runs once mobile/ios/ has been committed (after:
-    #   cd mobile && flutter create . --platforms ios --project-name am_radio).
-    # Remove this condition when the ios/ directory is present.
-    if: ${{ hashFiles('mobile/ios/Runner.xcodeproj/project.pbxproj') != '' }}
     defaults:
       run:
         working-directory: mobile

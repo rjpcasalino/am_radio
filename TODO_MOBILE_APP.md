@@ -9,8 +9,8 @@ development) and Android, with iOS possible later.
 | Platform | Status |
 |----------|--------|
 | Linux desktop (Flutter) | ✅ MVP scaffolded — see `mobile/` |
-| Android (Flutter) | 🚧 scaffold ready; audio backend needs work |
-| iOS (Flutter) | 🚧 decided — bootstrap pending (needs macOS + Xcode) |
+| Android (Flutter) | 🚧 scaffold ready; audio backend needs device testing |
+| iOS (Flutter) | 🚧 Xcode project committed; ready to install on device |
 
 ## NixOS / Nix flake
 
@@ -20,19 +20,14 @@ A `flake.nix` lives at the repo root.  Enter the Flutter dev shell with:
 nix develop .#mobile
 ```
 
-It installs Flutter, cmake, ninja, clang, pkg-config, gtk3, and mpv, and
-auto-generates the `linux/` + `android/` platform directories on first entry.
-
-The macOS `shellHook` already exports `DEVELOPER_DIR`.  Once the `ios/`
-platform directory is committed (see below), extend the bootstrap line to
-include `ios` — but only after confirming `flutter create --platforms ios`
-works on your macOS machine.
+On macOS this sets `DEVELOPER_DIR` automatically so Xcode tools are on PATH.
+On Linux it installs Flutter with the Android SDK, cmake, ninja, clang, etc.
 
 ## Flutter app (`mobile/`)
 
 ### Done
-- [x] `flake.nix` — `devShells.mobile` with all Linux build deps
-- [x] `mobile/pubspec.yaml` — Flutter project metadata (describes Android, iOS, Linux)
+- [x] `flake.nix` — `devShells.mobile` with all Linux + Android build deps
+- [x] `mobile/pubspec.yaml` — Flutter project metadata (Android, iOS, Linux)
 - [x] `mobile/lib/main.dart` — app entry + dark Material 3 theme (vintage bakelite)
 - [x] `mobile/lib/models/station.dart` — Station data class (config + JSON)
 - [x] `mobile/lib/services/player_service.dart` — mpv subprocess (Linux) + just_audio/AVFoundation (iOS/Android)
@@ -46,29 +41,55 @@ works on your macOS machine.
 - [x] List / radio view toggle: "list" = simple station list; "radio" = frequency dial + list
 - [x] `FrequencyDial` widget wired into radio (dial) view — tap tick or swipe to change station
 - [x] `.github/workflows/flutter.yml` — CI: analyze + test (Linux); `flutter build ios --no-codesign` (macOS)
+- [x] `mobile/ios/` — Xcode runner directory committed; app icons populated
+- [x] `Info.plist` — `UIBackgroundModes: audio` (radio keeps playing when screen locks)
+- [x] `Info.plist` — `NSAppTransportSecurity` allowsArbitraryLoads (HTTP radio streams work)
+- [x] `Podfile` + `project.pbxproj` — iOS deployment target 14.0 (required by just_audio 0.10.x)
+- [x] `deploy-ios.sh` — one-command physical iPhone install (see below)
 
-### Next — iOS bootstrap (requires macOS + Xcode)
-- [ ] Run `cd mobile && flutter create . --platforms ios --project-name am_radio`
-      and commit the generated `mobile/ios/` directory
-- [ ] Run `flutter pub run flutter_launcher_icons` on macOS to populate
-      `ios/Runner/Assets.xcassets/` with the app icon (pubspec already has `ios: true`)
-- [ ] Extend the `flake.nix` shellHook bootstrap to include `ios` in the platform list
-      (only after the above has been verified to work)
-- [ ] Verify `flutter build ios --no-codesign` passes in CI (macOS job already added)
-- [ ] Test on a physical device or simulator: AVFoundation stream playback,
-      ICY metadata display, SharedPreferences persistence
+### iOS — Getting the app on your iPhone
+
+**Quickstart (free Apple ID, no $99 developer account needed):**
+
+1. **First time only** — open Xcode, go to **Preferences → Accounts**, add your
+   Apple ID.  Xcode creates a free "Personal Team" that lets you install on
+   your own devices.
+
+2. **Trust your Mac** — connect iPhone via USB and tap *Trust* when prompted.
+
+3. **Enter the dev shell** (macOS only, needs Flutter + Xcode):
+   ```sh
+   nix develop .#mobile
+   ```
+
+4. **Deploy** from the repo root:
+   ```sh
+   bash deploy-ios.sh            # debug build (default)
+   bash deploy-ios.sh --release  # release build
+   ```
+
+The script auto-detects your connected iPhone, runs `flutter pub get`, builds
+the app, and calls `flutter install` to copy it to the device.
+
+> **7-day expiry (free account):** debug builds signed with a free Personal
+> Team profile expire after 7 days.  Simply re-run `bash deploy-ios.sh` to
+> reinstall.  Release builds without a paid account also expire the same way —
+> use the `--release` flag for a faster, smaller binary.
+
+**Alternatively** — open `mobile/ios/Runner.xcworkspace` in Xcode, select
+your device, and press ▶ (Run).  This is equivalent to debug deploy.
+
+### Next — Features / Platform
+- [ ] Verify `flutter build ios --no-codesign` passes in CI (macOS GitHub runner)
+- [ ] Android audio backend: test `just_audio` + ExoPlayer on a real device
+- [ ] Show live track metadata (ICY tags) in the Now Playing bar
+- [ ] Lo-Fi AM filter toggle (pass `--af=…` to mpv on Linux; EQ plugin on mobile)
 
 ### Next — UI
 - [ ] Full transistor radio redesign for the main (radio) view:
       knob widgets (volume, tone), grille texture, curved body, backlit dial window
-- [ ] Minimal mode: refine A4-paper print feel (hairline rules between stations,
-      bold station name, italic genre, optional serif font)
+- [ ] Minimal mode: refine A4-paper print feel (hairline rules, bold name, italic genre)
 - [ ] Dark-mode variant of minimal mode (white-on-black terminal aesthetic)
-
-### Next — Features / Platform
-- [ ] Android audio backend: verify `just_audio` + ExoPlayer works on device
-- [ ] Show live track metadata (ICY tags) in the Now Playing bar
-- [ ] Lo-Fi AM filter toggle (pass `--af=…` to mpv on Linux; EQ on mobile)
 
 ## iOS — Decision record
 
@@ -88,5 +109,3 @@ Reasons:
 - A native Swift rewrite would duplicate all business logic for no gain:
   `just_audio` already calls AVFoundation internally, and the hand-crafted
   UI intentionally avoids stock platform chrome.
-- The only missing piece is the generated `mobile/ios/` Xcode runner
-  directory, which `flutter create . --platforms ios` produces in seconds.
