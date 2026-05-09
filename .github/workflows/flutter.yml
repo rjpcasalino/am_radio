@@ -39,3 +39,30 @@ jobs:
 
       - name: Run tests
         run: flutter test --reporter=expanded
+
+  build-ios:
+    name: Build iOS (no-codesign)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    # Only runs once mobile/ios/ has been committed (after:
+    #   cd mobile && flutter create . --platforms ios --project-name am_radio).
+    # Remove this condition when the ios/ directory is present.
+    if: ${{ hashFiles('mobile/ios/Runner.xcodeproj/project.pbxproj') != '' }}
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS (no code signing)
+        run: flutter build ios --no-codesign --release
