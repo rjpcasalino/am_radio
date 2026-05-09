@@ -44,6 +44,9 @@ binmode STDERR, ':encoding(UTF-8)';
 my $CONFIG_FILE = "$ENV{HOME}/.radio_stations";
 my @STATIONS;
 
+# Verbose logging flag - set via -v command-line option
+my $VERBOSE = 0;
+
 # ANSI color escape sequences. Note: \e is the literal ESC byte (0x1B).
 my $CYAN    = "\e[36m";
 my $GREEN   = "\e[32m";
@@ -54,6 +57,18 @@ my $WHITE   = "\e[37m";
 my $BOLD    = "\e[1m";
 my $DIM     = "\e[2m";
 my $RESET   = "\e[0m";
+
+# ------------------------------------------------------------------------------
+# verbose_log - print timestamped debug messages when -v is enabled
+# ------------------------------------------------------------------------------
+sub verbose_log {
+    return unless $VERBOSE;
+    my ($msg) = @_;
+    my ($sec, $min, $hour, $mday, $mon, $year) = localtime(time);
+    my $timestamp = sprintf("%04d-%02d-%02d %02d:%02d:%02d",
+                           $year + 1900, $mon + 1, $mday, $hour, $min, $sec);
+    print STDERR "${DIM}[$timestamp] [am_radio] $msg${RESET}\n";
+}
 
 # ------------------------------------------------------------------------------
 # First-run bootstrap (unchanged from original)
@@ -104,6 +119,7 @@ ${BOLD}Options:${RESET}
   -o         Enable 'Old Time Radio' audio filter (lo-fi AM sound)
   -i         Dump initial station metadata (ffprobe required)
   -t         Tuner mode: vintage TUI with dial, signal meter and ON AIR lamp
+  -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
 
 ${BOLD}Tuner mode keys:${RESET}
@@ -520,7 +536,8 @@ sub tui_term_size {
 sub tui_start_mpv {
     my ($st) = @_;
 
-    my (undef, $url) = split /::/, $st->{stations}[$st->{current}], 2;
+    my ($name, $url) = split /::/, $st->{stations}[$st->{current}], 2;
+    verbose_log("TUI: Starting mpv for station '$name' at URL: $url");
 
     # If mpv left a stale socket from a previous run, clear it.
     unlink $st->{sock} if -e $st->{sock};
@@ -533,7 +550,8 @@ sub tui_start_mpv {
         # on failure so we don't run any END blocks belonging to the parent.
         open(STDIN,  '<', '/dev/null');
         open(STDOUT, '>', '/dev/null');
-        open(STDERR, '>', '/dev/null');
+        # Keep stderr open if verbose logging is enabled
+        open(STDERR, '>', '/dev/null') unless $VERBOSE;
 
         my @args = (
             'mpv',
@@ -543,8 +561,9 @@ sub tui_start_mpv {
             '--msg-level=all=error',
             "--input-ipc-server=$st->{sock}",
         );
-        push @args, '--af=lavfi=[highpass=f=300,lowpass=f=4500,acompressor]'
-            if $st->{filter};
+        if ($st->{filter}) {
+            push @args, '--af=lavfi=[highpass=f=300,lowpass=f=4500,acompressor]';
+        }
         push @args, $url;
 
         # exec() never returns on success; the 'or' branch only runs if exec
@@ -556,6 +575,7 @@ sub tui_start_mpv {
     $st->{track}      = '';
     $st->{last_poll}  = 0;
     $st->{tune_start} = time();
+    verbose_log("TUI: mpv started with PID: $pid");
 }
 
 # ------------------------------------------------------------------------------
@@ -567,22 +587,26 @@ sub tui_stop_mpv {
     my $pid = $st->{mpv_pid};
     return unless $pid;
 
+    verbose_log("TUI: Stopping mpv process PID: $pid");
     kill 'TERM', $pid;
     for (1 .. 20) {                               # wait up to ~1s (20 * 50ms)
         my $r = waitpid($pid, WNOHANG);
         if ($r == $pid || $r == -1) {
             $st->{mpv_pid} = undef;
             unlink $st->{sock} if -e $st->{sock};
+            verbose_log("TUI: mpv stopped gracefully");
             return;
         }
         sleep 0.05;
     }
 
     # Still alive - SIGKILL it.
+    verbose_log("TUI: mpv didn't respond to SIGTERM, sending SIGKILL");
     kill 'KILL', $pid;
     waitpid($pid, 0);
     $st->{mpv_pid} = undef;
     unlink $st->{sock} if -e $st->{sock};
+    verbose_log("TUI: mpv killed and socket cleaned up");
 }
 
 # ------------------------------------------------------------------------------
@@ -1093,6 +1117,7 @@ sub radio_tui {
         # Reap mpv if it died on its own (network drop, decoder crash, etc.)
         # so we don't keep showing stale state.
         if ($st{mpv_pid} && waitpid($st{mpv_pid}, WNOHANG) == $st{mpv_pid}) {
+            verbose_log("TUI: mpv process died unexpectedly (possible stream drop/crash)");
             $st{mpv_pid}   = undef;
             $st{msg}       = 'Stream lost — press r to retune';
             $st{msg_until} = $now + 5;
@@ -1100,6 +1125,9 @@ sub radio_tui {
 
         if ($now - $st{last_poll} >= 1.5 && $st{mpv_pid}) {
             my $t = tui_query_track(\%st);
+            if (defined $t && $t ne $st{track}) {
+                verbose_log("TUI: Track changed to: $t");
+            }
             $st{track} = $t if defined $t;
             $st{last_poll} = $now;
         }
@@ -1130,7 +1158,7 @@ my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
 
 my %opts;
-unless (getopts('s:f:loith', \%opts)) {
+unless (getopts('s:f:loithv', \%opts)) {
     print STDERR "${YELLOW}Invalid option.${RESET}\n";
     show_help();
 }
@@ -1148,6 +1176,7 @@ $STATION_CHOICE   = $opts{s} if defined $opts{s};
 $FILTER_OLD_RADIO = 1 if $opts{o};
 $SHOW_INFO        = 1 if $opts{i};
 $TUI_MODE         = 1 if $opts{t};
+$VERBOSE          = 1 if $opts{v};
 
 if ($STATION_CHOICE eq '' && @ARGV > 0) {
     $STATION_CHOICE = $ARGV[0];
@@ -1219,6 +1248,9 @@ if ($FILTER_OLD_RADIO) {
 
 dump_info($STATION_URL) if $SHOW_INFO;
 
+verbose_log("Starting playback for station: $STATION_NAME");
+verbose_log("Stream URL: $STATION_URL");
+
 print "\n${BOLD}Tuning in to $STATION_NAME...${RESET}\n";
 print "Press ${YELLOW}Ctrl+C${RESET} to stop playback.\n\n";
 
@@ -1230,12 +1262,15 @@ if ($poller_pid == 0) {
     POSIX::_exit(0);
 }
 
-system('mpv', @MPV_ARGS, $STATION_URL);
+verbose_log("Starting mpv with args: " . join(' ', @MPV_ARGS));
+my $mpv_exit = system('mpv', @MPV_ARGS, $STATION_URL);
+verbose_log("mpv exited with status: $mpv_exit");
 
 kill 'TERM', $poller_pid;
 waitpid($poller_pid, 0);
 
 unlink $IPC_SOCKET if -e $IPC_SOCKET;
+verbose_log("Playback session ended, cleaned up IPC socket");
 
 exit 0;
 

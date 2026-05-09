@@ -6,16 +6,25 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'services/player_service.dart';
 import 'services/station_repository.dart';
+import 'services/log_service.dart';
+import 'services/settings_service.dart';
 
 void main() async {
+  final startTime = DateTime.now();
+
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Create PlayerService before runApp so signal handlers can reference it.
+  // Create services before runApp so signal handlers can reference them.
   // On Linux without a desktop environment Flutter's dispose() chain is never
   // invoked when the process is killed, so we must stop mpv ourselves here.
-  final player = PlayerService();
+  final logService = LogService();
+  final settingsService = SettingsService();
+  final player = PlayerService(logService: logService);
   final stations = StationRepository();
-  await stations.load();
+
+  final initTime = DateTime.now().difference(startTime).inMilliseconds;
+  logService.log('App initialization took ${initTime}ms', level: LogLevel.info);
+  logService.log('App starting...', level: LogLevel.info);
 
   // Signal handlers are only meaningful on Linux (where mpv runs as a
   // subprocess).  iOS/Android apps are sandboxed — they don't receive POSIX
@@ -26,28 +35,66 @@ void main() async {
   // SIGHUP  — terminal closes / SSH ends      (conventional exit 129)
   if (Platform.isLinux) {
     ProcessSignal.sigint.watch().listen((_) {
+      logService.log('Received SIGINT, stopping...', level: LogLevel.info);
       player.stop();
       exit(130); // 128 + SIGINT(2)
     });
     ProcessSignal.sigterm.watch().listen((_) {
+      logService.log('Received SIGTERM, stopping...', level: LogLevel.info);
       player.stop();
       exit(143); // 128 + SIGTERM(15)
     });
     ProcessSignal.sighup.watch().listen((_) {
+      logService.log('Received SIGHUP, stopping...', level: LogLevel.info);
       player.stop();
       exit(129); // 128 + SIGHUP(1)
     });
   }
 
+  final preRunAppTime = DateTime.now().difference(startTime).inMilliseconds;
+  logService.log('Pre-runApp setup took ${preRunAppTime}ms', level: LogLevel.debug);
+
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: logService),
+        ChangeNotifierProvider.value(value: settingsService),
         ChangeNotifierProvider.value(value: player),
         ChangeNotifierProvider.value(value: stations),
       ],
       child: const AmRadioApp(),
     ),
   );
+
+  final postRunAppTime = DateTime.now().difference(startTime).inMilliseconds;
+  logService.log('runApp() completed in ${postRunAppTime - preRunAppTime}ms', level: LogLevel.debug);
+  logService.log('Total time to runApp: ${postRunAppTime}ms', level: LogLevel.info);
+
+  // Load settings and saved stations asynchronously AFTER runApp to avoid blocking UI.
+  // This fixes the ~15s white screen issue on older devices where
+  // SharedPreferences I/O would freeze the main thread before the first frame.
+  // The UI appears immediately and data populates in the background.
+  final settingsLoadStart = DateTime.now();
+  logService.log('Loading settings...', level: LogLevel.debug);
+  settingsService.load().then((_) {
+    final elapsed = DateTime.now().difference(settingsLoadStart).inMilliseconds;
+    logService.log('Settings loaded in ${elapsed}ms', level: LogLevel.info);
+  }).catchError((e) {
+    logService.log('Failed to load settings: $e', level: LogLevel.error);
+  });
+
+  final stationsLoadStart = DateTime.now();
+  logService.log('Loading saved stations...', level: LogLevel.debug);
+  stations.load().then((_) {
+    final elapsed = DateTime.now().difference(stationsLoadStart).inMilliseconds;
+    logService.log('Saved stations loaded in ${elapsed}ms', level: LogLevel.info);
+
+    final totalTime = DateTime.now().difference(startTime).inMilliseconds;
+    logService.log('Total app startup time: ${totalTime}ms', level: LogLevel.info);
+  }).catchError((e) {
+    logService.log('Failed to load saved stations: $e', level: LogLevel.error);
+    debugPrint('[StationRepository] Failed to load saved stations: $e');
+  });
 }
 
 class AmRadioApp extends StatelessWidget {
