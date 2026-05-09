@@ -6,15 +6,19 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'services/player_service.dart';
 import 'services/station_repository.dart';
+import 'services/log_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Create PlayerService before runApp so signal handlers can reference it.
+  // Create services before runApp so signal handlers can reference them.
   // On Linux without a desktop environment Flutter's dispose() chain is never
   // invoked when the process is killed, so we must stop mpv ourselves here.
-  final player = PlayerService();
+  final logService = LogService();
+  final player = PlayerService(logService: logService);
   final stations = StationRepository();
+
+  logService.log('App starting...', level: LogLevel.info);
 
   // Signal handlers are only meaningful on Linux (where mpv runs as a
   // subprocess).  iOS/Android apps are sandboxed — they don't receive POSIX
@@ -25,14 +29,17 @@ void main() async {
   // SIGHUP  — terminal closes / SSH ends      (conventional exit 129)
   if (Platform.isLinux) {
     ProcessSignal.sigint.watch().listen((_) {
+      logService.log('Received SIGINT, stopping...', level: LogLevel.info);
       player.stop();
       exit(130); // 128 + SIGINT(2)
     });
     ProcessSignal.sigterm.watch().listen((_) {
+      logService.log('Received SIGTERM, stopping...', level: LogLevel.info);
       player.stop();
       exit(143); // 128 + SIGTERM(15)
     });
     ProcessSignal.sighup.watch().listen((_) {
+      logService.log('Received SIGHUP, stopping...', level: LogLevel.info);
       player.stop();
       exit(129); // 128 + SIGHUP(1)
     });
@@ -41,6 +48,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: logService),
         ChangeNotifierProvider.value(value: player),
         ChangeNotifierProvider.value(value: stations),
       ],
@@ -52,7 +60,11 @@ void main() async {
   // This fixes the ~15s white screen issue on older devices where
   // SharedPreferences I/O would freeze the main thread before the first frame.
   // The UI appears immediately and saved stations populate in the background.
-  stations.load().catchError((e) {
+  logService.log('Loading saved stations...', level: LogLevel.debug);
+  stations.load().then((_) {
+    logService.log('Saved stations loaded successfully', level: LogLevel.info);
+  }).catchError((e) {
+    logService.log('Failed to load saved stations: $e', level: LogLevel.error);
     debugPrint('[StationRepository] Failed to load saved stations: $e');
   });
 }

@@ -9,6 +9,7 @@ void main() {
     late PlayerService playerService;
 
     setUp(() {
+      // Create PlayerService without LogService for tests
       playerService = PlayerService();
     });
 

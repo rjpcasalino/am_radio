@@ -11,6 +11,7 @@ import '../services/station_repository.dart';
 import '../widgets/frequency_dial.dart';
 import '../widgets/radio_logo.dart';
 import '../widgets/signal_meter.dart';
+import 'log_viewer_screen.dart';
 
 /// The same default stations that ship with `am_radio.pl`.
 const List<Station> _defaultStations = [
@@ -163,9 +164,32 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── A. Header / brand strip ────────────────────────────────────────────────
 
   Widget _buildHeader() {
-    return const Padding(
-      padding: EdgeInsets.fromLTRB(16, 10, 16, 4),
-      child: Center(child: RadioLogo(width: 90)),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const SizedBox(width: 40), // Balance the debug button
+          const Center(child: RadioLogo(width: 90)),
+          IconButton(
+            icon: const Icon(
+              Icons.bug_report_outlined,
+              size: 20,
+              color: Color(0xFF6B4400),
+            ),
+            tooltip: 'Debug logs',
+            padding: EdgeInsets.zero,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LogViewerScreen(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 

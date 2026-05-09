@@ -5,17 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../models/station.dart';
-
-// Enable verbose logging for debugging audio drops and player lifecycle.
-// Set to false in production to reduce log noise.
-const _kVerboseLogging = true;
-
-void _log(String message) {
-  if (_kVerboseLogging) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp] [PlayerService] $message');
-  }
-}
+import 'log_service.dart';
 
 /// Plays internet radio streams.
 ///
@@ -26,6 +16,8 @@ void _log(String message) {
 /// (AVFoundation on iOS, ExoPlayer on Android), because those platforms are
 /// sandboxed and cannot spawn external processes.
 class PlayerService extends ChangeNotifier {
+  final LogService? _logService;
+
   // Linux-only: mpv subprocess.
   Process? _process;
 
@@ -40,6 +32,19 @@ class PlayerService extends ChangeNotifier {
   bool _isBuffering = false;
   String? _currentTrack;
   bool _loFi = false;
+
+  PlayerService({LogService? logService}) : _logService = logService;
+
+  void _log(String message, {LogLevel level = LogLevel.info}) {
+    // Always log to LogService if available
+    _logService?.log(message, level: level);
+
+    // Also log to debugPrint for development
+    if (kDebugMode) {
+      final timestamp = DateTime.now().toIso8601String();
+      debugPrint('[$timestamp] [PlayerService] $message');
+    }
+  }
 
   Station? get currentStation => _currentStation;
   bool get isPlaying => _isPlaying;
@@ -108,7 +113,7 @@ class PlayerService extends ChangeNotifier {
         // overwrite state after play() has already been called for a new station.
         process.exitCode.then((exitCode) {
           if (identical(_process, process)) {
-            _log('mpv process exited with code: $exitCode');
+            _log('mpv process exited with code: $exitCode', level: LogLevel.warning);
             _isPlaying = false;
             _process = null;
             notifyListeners();
@@ -122,7 +127,7 @@ class PlayerService extends ChangeNotifier {
         // Mark as buffering while the stream is being set up / connecting.
         _isBuffering = true;
         notifyListeners();
-        _log('Buffering started, setting URL...');
+        _log('Buffering started, setting URL...', level: LogLevel.debug);
 
         await _audioPlayer!.setUrl(station.url);
         _log('URL set, starting playback...');
@@ -132,9 +137,9 @@ class PlayerService extends ChangeNotifier {
         // Cancel any leftover subscription before attaching to the new stream.
         await _playingSub?.cancel();
         _playingSub = _audioPlayer!.playingStream.listen((isPlaying) {
-          _log('playingStream event: isPlaying=$isPlaying');
+          _log('playingStream event: isPlaying=$isPlaying', level: LogLevel.debug);
           if (!isPlaying && _isPlaying) {
-            _log('Stream stopped unexpectedly (possible audio drop)');
+            _log('Stream stopped unexpectedly (possible audio drop)', level: LogLevel.warning);
             _isPlaying = false;
             _isBuffering = false;
             notifyListeners();
@@ -145,7 +150,7 @@ class PlayerService extends ChangeNotifier {
         // buffering/connecting from actively streaming audio.
         await _processingSub?.cancel();
         _processingSub = _audioPlayer!.processingStateStream.listen((state) {
-          _log('processingStateStream event: $state');
+          _log('processingStateStream event: $state', level: LogLevel.debug);
           final buffering = state == ProcessingState.loading ||
               state == ProcessingState.buffering;
           if (buffering != _isBuffering) {
@@ -167,7 +172,7 @@ class PlayerService extends ChangeNotifier {
         });
       }
     } catch (e) {
-      _log('ERROR in play(): $e');
+      _log('ERROR in play(): $e', level: LogLevel.error);
       _isPlaying = false;
       _currentStation = null;
       notifyListeners();
@@ -178,7 +183,7 @@ class PlayerService extends ChangeNotifier {
   /// Stop the currently playing stream.
   Future<void> stop() async {
     if (!_isPlaying && _process == null && _audioPlayer == null) {
-      _log('stop() called but nothing is playing');
+      _log('stop() called but nothing is playing', level: LogLevel.debug);
       return;
     }
     _log('stop() called');
@@ -210,7 +215,7 @@ class PlayerService extends ChangeNotifier {
 
   @override
   void dispose() {
-    _log('dispose() called - cleaning up resources');
+    _log('dispose() called - cleaning up resources', level: LogLevel.debug);
     _playingSub?.cancel();
     _processingSub?.cancel();
     _icySub?.cancel();

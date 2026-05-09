@@ -6,6 +6,8 @@ import 'package:am_radio/services/player_service.dart';
 import 'package:am_radio/services/station_repository.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('HomeScreen', () {
     testWidgets('should render without crashing', (WidgetTester tester) async {
       final playerService = PlayerService();
