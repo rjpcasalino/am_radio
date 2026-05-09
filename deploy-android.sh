@@ -11,6 +11,7 @@ set -euo pipefail
 #   --screenshot-dir   Directory to save screenshot (default: current directory)
 #   --wait SECONDS     Seconds to wait for app to render before screenshot (default: 10)
 #   --skip-build       Skip building the app
+#   --no-screenshot    Skip taking screenshot after deployment
 #   --help             Show this help message
 
 # Colors for output
@@ -24,6 +25,7 @@ NC='\033[0m' # No Color
 BUILD_MODE="debug"
 SCREENSHOT_DIR="."
 SKIP_BUILD=false
+SKIP_SCREENSHOT=false
 RENDER_DELAY=10  # seconds to wait for app to render before screenshot
 
 # Parse command line arguments
@@ -39,6 +41,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-build)
             SKIP_BUILD=true
+            shift
+            ;;
+        --no-screenshot)
+            SKIP_SCREENSHOT=true
             shift
             ;;
         --wait)
@@ -193,13 +199,21 @@ launch_app() {
 
     log_success "App launched"
 
-    # Give the app time to fully render
-    log_info "Waiting for app to render (${RENDER_DELAY} seconds)..."
-    sleep "$RENDER_DELAY"
+    # Only wait if we're taking a screenshot
+    if [ "$SKIP_SCREENSHOT" = false ]; then
+        # Give the app time to fully render
+        log_info "Waiting for app to render (${RENDER_DELAY} seconds)..."
+        sleep "$RENDER_DELAY"
+    fi
 }
 
 # Capture screenshot from device
 capture_screenshot() {
+    if [ "$SKIP_SCREENSHOT" = true ]; then
+        log_info "Skipping screenshot (--no-screenshot specified)"
+        return
+    fi
+
     log_info "Capturing screenshot from device..."
 
     # Create screenshot directory if it doesn't exist
@@ -256,7 +270,9 @@ main() {
     log_success "Deployment complete!"
     echo ""
     echo "The am_radio app is now running on your Android device."
-    echo "Screenshot has been captured and saved to your PC."
+    if [ "$SKIP_SCREENSHOT" = false ]; then
+        echo "Screenshot has been captured and saved to your PC."
+    fi
     echo ""
 }
 

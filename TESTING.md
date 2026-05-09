@@ -47,6 +47,24 @@ flutter test
   - Tests duplicate detection
   - Tests isSaved() method
 
+- `settings_service_test.dart`: Unit tests for SettingsService
+  - Tests initial minimalMode defaults to false
+  - Tests load() reads from SharedPreferences
+  - Tests setMinimalMode() updates and persists values
+  - Tests notifyListeners is called on changes
+  - 7 comprehensive tests covering performance mode toggle
+
+- `log_service_test.dart`: Tests for LogService and LogViewerScreen
+  - LogService unit tests:
+    - Tests log entry addition and limiting (max 500 entries)
+    - Tests clear() functionality
+    - Tests export() formatting
+  - LogViewerScreen widget tests:
+    - Tests screen renders without crashing
+    - Tests display of log entries with correct severity levels
+    - Tests copy and clear button functionality
+    - Tests "No logs yet" empty state
+
 - `home_screen_widget_test.dart`: Widget tests for HomeScreen
   - Tests widget renders without crashing
   - Tests transport controls are present
