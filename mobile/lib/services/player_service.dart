@@ -99,8 +99,7 @@ class PlayerService extends ChangeNotifier {
             '--no-video',
             '--really-quiet',
             '--title=${station.name}',
-            if (_loFi)
-              '--af=lavfi=[highpass=f=300,lowpass=f=4500,acompressor]',
+            if (_loFi) '--af=lavfi=[highpass=f=300,lowpass=f=4500,acompressor]',
           ],
           // Inherit stderr so mpv error messages surface in the console.
           mode: ProcessStartMode.normal,
@@ -113,7 +112,8 @@ class PlayerService extends ChangeNotifier {
         // overwrite state after play() has already been called for a new station.
         process.exitCode.then((exitCode) {
           if (identical(_process, process)) {
-            _log('mpv process exited with code: $exitCode', level: LogLevel.warning);
+            _log('mpv process exited with code: $exitCode',
+                level: LogLevel.warning);
             _isPlaying = false;
             _process = null;
             notifyListeners();
@@ -137,9 +137,11 @@ class PlayerService extends ChangeNotifier {
         // Cancel any leftover subscription before attaching to the new stream.
         await _playingSub?.cancel();
         _playingSub = _audioPlayer!.playingStream.listen((isPlaying) {
-          _log('playingStream event: isPlaying=$isPlaying', level: LogLevel.debug);
+          _log('playingStream event: isPlaying=$isPlaying',
+              level: LogLevel.debug);
           if (!isPlaying && _isPlaying) {
-            _log('Stream stopped unexpectedly (possible audio drop)', level: LogLevel.warning);
+            _log('Stream stopped unexpectedly (possible audio drop)',
+                level: LogLevel.warning);
             _isPlaying = false;
             _isBuffering = false;
             notifyListeners();

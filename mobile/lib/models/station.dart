@@ -25,9 +25,7 @@ class Station {
   factory Station.fromJson(Map<String, dynamic> json) {
     return Station(
       name: (json['name'] as String? ?? 'Unknown').trim(),
-      url: (json['url_resolved'] as String? ??
-              json['url'] as String? ??
-              '')
+      url: (json['url_resolved'] as String? ?? json['url'] as String? ?? '')
           .trim(),
       genre: json['tags'] as String?,
       bitrate: int.tryParse(json['bitrate']?.toString() ?? ''),

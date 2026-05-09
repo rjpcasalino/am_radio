@@ -60,8 +60,7 @@ class _RadioLogoPainter extends CustomPainter {
 
     // ── Dial window ────────────────────────────────────────────────────────
     final dialLeft = grillRight + 5;
-    final dialRect =
-        Rect.fromLTWH(dialLeft, 4, w - dialLeft - 4, h - 8);
+    final dialRect = Rect.fromLTWH(dialLeft, 4, w - dialLeft - 4, h - 8);
     final dialRRect =
         RRect.fromRectAndRadius(dialRect, const Radius.circular(3));
 

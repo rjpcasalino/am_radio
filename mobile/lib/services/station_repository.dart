@@ -25,9 +25,8 @@ class StationRepository extends ChangeNotifier {
     if (raw == null) return;
     try {
       final list = jsonDecode(raw) as List<dynamic>;
-      _saved = list
-          .map((e) => Station.fromJson(e as Map<String, dynamic>))
-          .toList();
+      _saved =
+          list.map((e) => Station.fromJson(e as Map<String, dynamic>)).toList();
       notifyListeners();
     } catch (_) {
       // Ignore corrupt data — start with an empty saved list.
@@ -66,6 +65,5 @@ class StationRepository extends ChangeNotifier {
   }
 
   /// Returns true if a station with the same URL is in the saved list.
-  bool isSaved(Station station) =>
-      _saved.any((s) => s.url == station.url);
+  bool isSaved(Station station) => _saved.any((s) => s.url == station.url);
 }

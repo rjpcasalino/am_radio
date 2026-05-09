@@ -147,8 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final minimalMode = settings.minimalMode;
     final listView = settings.listView;
 
-    final stations =
-        _isDefaultMode ? _effectiveStations(repo) : _stations;
+    final stations = _isDefaultMode ? _effectiveStations(repo) : _stations;
     final currentIdx =
         stations.indexWhere((s) => s.url == player.currentStation?.url);
 
@@ -160,7 +159,9 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _buildHeader(),
             _buildDisplayPanel(player, currentIdx, stations),
-            Expanded(child: _buildMiddle(player, currentIdx, stations, listView, minimalMode)),
+            Expanded(
+                child: _buildMiddle(
+                    player, currentIdx, stations, listView, minimalMode)),
           ],
         ),
       ),
@@ -204,7 +205,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             // Exit minimal mode
             IconButton(
-              icon: const Icon(Icons.palette_outlined, size: 20, color: Colors.black54),
+              icon: const Icon(Icons.palette_outlined,
+                  size: 20, color: Colors.black54),
               tooltip: 'Switch to radio mode',
               padding: EdgeInsets.zero,
               onPressed: () => settings.setMinimalMode(false),
@@ -222,7 +224,8 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           // Minimal mode toggle
           IconButton(
-            icon: const Icon(Icons.article_outlined, size: 20, color: Color(0xFF6B4400)),
+            icon: const Icon(Icons.article_outlined,
+                size: 20, color: Color(0xFF6B4400)),
             tooltip: 'Switch to minimal (paper) mode',
             padding: EdgeInsets.zero,
             onPressed: () => settings.setMinimalMode(true),
@@ -244,7 +247,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               // Debug logs
               IconButton(
-                icon: const Icon(Icons.bug_report_outlined, size: 20, color: Color(0xFF6B4400)),
+                icon: const Icon(Icons.bug_report_outlined,
+                    size: 20, color: Color(0xFF6B4400)),
                 tooltip: 'Debug logs',
                 padding: EdgeInsets.zero,
                 onPressed: () {
@@ -270,9 +274,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final settings = context.watch<SettingsService>();
     final minimalMode = settings.minimalMode;
 
-    final freq = currentIdx >= 0
-        ? fakeFreqKHz(currentIdx, wheelStations.length)
-        : 1020;
+    final freq =
+        currentIdx >= 0 ? fakeFreqKHz(currentIdx, wheelStations.length) : 1020;
 
     // Minimal mode: pure white A4-paper display — black text on white, no decorations
     if (minimalMode) {
@@ -297,7 +300,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               overflow: TextOverflow.ellipsis,
             ),
-            if (player.currentTrack != null && player.currentTrack!.isNotEmpty) ...[
+            if (player.currentTrack != null &&
+                player.currentTrack!.isNotEmpty) ...[
               const SizedBox(height: 2),
               Text(
                 player.currentTrack!,
@@ -390,8 +394,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── C. Search bar / tune label + station list + transport controls ────────
 
-  Widget _buildMiddle(
-      PlayerService player, int currentIdx, List<Station> stations, bool listView, bool minimalMode) {
+  Widget _buildMiddle(PlayerService player, int currentIdx,
+      List<Station> stations, bool listView, bool minimalMode) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -447,12 +451,15 @@ class _HomeScreenState extends State<HomeScreen> {
               child: TextField(
                 controller: _searchController,
                 autofocus: _searchMode && _isDefaultMode,
-                style: TextStyle(fontFamily: 'monospace', fontSize: 14, color: textColor),
+                style: TextStyle(
+                    fontFamily: 'monospace', fontSize: 14, color: textColor),
                 decoration: InputDecoration(
                   hintText: 'Search radio-browser.info…',
-                  hintStyle: TextStyle(fontFamily: 'monospace', fontSize: 13, color: hintColor),
+                  hintStyle: TextStyle(
+                      fontFamily: 'monospace', fontSize: 13, color: hintColor),
                   isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   filled: true,
                   fillColor: fillColor,
                   border: OutlineInputBorder(
@@ -497,10 +504,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Default mode: TUNE label + find button
     final labelStyle = minimal
-        ? const TextStyle(fontFamily: 'monospace', fontSize: 10, color: Colors.black54, letterSpacing: 2)
+        ? const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 10,
+            color: Colors.black54,
+            letterSpacing: 2)
         : _monoStyle(dim: true, fontSize: 10, letterSpacing: 2);
     final findStyle = minimal
-        ? const TextStyle(fontFamily: 'monospace', fontSize: 10, color: Colors.black54, letterSpacing: 1)
+        ? const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 10,
+            color: Colors.black54,
+            letterSpacing: 1)
         : _monoStyle(dim: true, fontSize: 10, letterSpacing: 1);
     final findIconColor = minimal ? Colors.black38 : const Color(0xFF6B4400);
 
@@ -537,7 +552,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Text(
           'No stations found.',
           style: minimal
-              ? const TextStyle(fontFamily: 'monospace', fontSize: 13, color: Colors.black)
+              ? const TextStyle(
+                  fontFamily: 'monospace', fontSize: 13, color: Colors.black)
               : _monoStyle(),
         ),
       );
@@ -576,8 +592,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 symbol: '◀',
                 enabled: currentIdx > 0,
                 minimal: minimal,
-                onPressed: () =>
-                    context.read<PlayerService>().play(stations[currentIdx - 1]),
+                onPressed: () => context
+                    .read<PlayerService>()
+                    .play(stations[currentIdx - 1]),
               ),
               _TransportButton(
                 symbol: '■',
@@ -588,20 +605,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (ps.isPlaying) {
                     ps.stop();
                   } else {
-                    final target = currentIdx >= 0
-                        ? stations[currentIdx]
-                        : stations[0];
+                    final target =
+                        currentIdx >= 0 ? stations[currentIdx] : stations[0];
                     ps.play(target);
                   }
                 },
               ),
               _TransportButton(
                 symbol: '▶',
-                enabled:
-                    currentIdx >= 0 && currentIdx < stations.length - 1,
+                enabled: currentIdx >= 0 && currentIdx < stations.length - 1,
                 minimal: minimal,
-                onPressed: () =>
-                    context.read<PlayerService>().play(stations[currentIdx + 1]),
+                onPressed: () => context
+                    .read<PlayerService>()
+                    .play(stations[currentIdx + 1]),
               ),
             ],
           ),
@@ -622,8 +638,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return TextStyle(
       fontFamily: 'monospace',
       fontSize: fontSize,
-      color: color ??
-          (dim ? const Color(0xFF6B4400) : const Color(0xFFF0E0B0)),
+      color: color ?? (dim ? const Color(0xFF6B4400) : const Color(0xFFF0E0B0)),
       fontWeight: bold ? FontWeight.bold : FontWeight.normal,
       letterSpacing: letterSpacing,
     );
@@ -760,8 +775,7 @@ class _StationTile extends StatelessWidget {
               : IconButton(
                   icon: Icon(Icons.play_circle_outline, color: iconColor),
                   tooltip: 'Play',
-                  onPressed: () =>
-                      context.read<PlayerService>().play(station),
+                  onPressed: () => context.read<PlayerService>().play(station),
                 ),
         ],
       ),

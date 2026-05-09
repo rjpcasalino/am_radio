@@ -52,7 +52,8 @@ void main() async {
   }
 
   final preRunAppTime = DateTime.now().difference(startTime).inMilliseconds;
-  logService.log('Pre-runApp setup took ${preRunAppTime}ms', level: LogLevel.debug);
+  logService.log('Pre-runApp setup took ${preRunAppTime}ms',
+      level: LogLevel.debug);
 
   runApp(
     MultiProvider(
@@ -67,8 +68,10 @@ void main() async {
   );
 
   final postRunAppTime = DateTime.now().difference(startTime).inMilliseconds;
-  logService.log('runApp() completed in ${postRunAppTime - preRunAppTime}ms', level: LogLevel.debug);
-  logService.log('Total time to runApp: ${postRunAppTime}ms', level: LogLevel.info);
+  logService.log('runApp() completed in ${postRunAppTime - preRunAppTime}ms',
+      level: LogLevel.debug);
+  logService.log('Total time to runApp: ${postRunAppTime}ms',
+      level: LogLevel.info);
 
   // Load settings and saved stations asynchronously AFTER runApp to avoid blocking UI.
   // This fixes the ~15s white screen issue on older devices where
@@ -87,10 +90,12 @@ void main() async {
   logService.log('Loading saved stations...', level: LogLevel.debug);
   stations.load().then((_) {
     final elapsed = DateTime.now().difference(stationsLoadStart).inMilliseconds;
-    logService.log('Saved stations loaded in ${elapsed}ms', level: LogLevel.info);
+    logService.log('Saved stations loaded in ${elapsed}ms',
+        level: LogLevel.info);
 
     final totalTime = DateTime.now().difference(startTime).inMilliseconds;
-    logService.log('Total app startup time: ${totalTime}ms', level: LogLevel.info);
+    logService.log('Total app startup time: ${totalTime}ms',
+        level: LogLevel.info);
   }).catchError((e) {
     logService.log('Failed to load saved stations: $e', level: LogLevel.error);
     debugPrint('[StationRepository] Failed to load saved stations: $e');
@@ -108,14 +113,14 @@ class AmRadioApp extends StatelessWidget {
       theme: ThemeData(
         // Hand-crafted dark palette that evokes a vintage bakelite transistor radio.
         colorScheme: const ColorScheme.dark(
-          surface: Color(0xFF1A0F00),       // dark bakelite body
-          primary: Color(0xFFE8A020),       // amber dial backlight
+          surface: Color(0xFF1A0F00), // dark bakelite body
+          primary: Color(0xFFE8A020), // amber dial backlight
           primaryContainer: Color(0xFF2E1A00),
           onPrimary: Color(0xFF1A0F00),
-          onSurface: Color(0xFFF0E0B0),     // cream lettering
-          secondary: Color(0xFF4CAF50),     // green ON AIR lamp
+          onSurface: Color(0xFFF0E0B0), // cream lettering
+          secondary: Color(0xFF4CAF50), // green ON AIR lamp
           onSecondary: Color(0xFF1A0F00),
-          tertiary: Color(0xFFFF6B35),      // warm signal-bar orange
+          tertiary: Color(0xFFFF6B35), // warm signal-bar orange
           onTertiary: Color(0xFF1A0F00),
         ),
         scaffoldBackgroundColor: const Color(0xFF1A0F00),

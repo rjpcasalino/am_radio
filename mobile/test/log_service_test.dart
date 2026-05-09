@@ -28,7 +28,8 @@ void main() {
       expect(find.text('Debug Logs'), findsOneWidget);
     });
 
-    testWidgets('should show "No logs yet" when empty', (WidgetTester tester) async {
+    testWidgets('should show "No logs yet" when empty',
+        (WidgetTester tester) async {
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: logService,
@@ -59,7 +60,8 @@ void main() {
       expect(find.text('INFO'), findsOneWidget);
     });
 
-    testWidgets('should show copy and clear buttons', (WidgetTester tester) async {
+    testWidgets('should show copy and clear buttons',
+        (WidgetTester tester) async {
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: logService,
