@@ -6,6 +6,17 @@ import 'package:just_audio/just_audio.dart';
 
 import '../models/station.dart';
 
+// Enable verbose logging for debugging audio drops and player lifecycle.
+// Set to false in production to reduce log noise.
+const _kVerboseLogging = true;
+
+void _log(String message) {
+  if (_kVerboseLogging) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp] [PlayerService] $message');
+  }
+}
+
 /// Plays internet radio streams.
 ///
 /// On **Linux** this mirrors what `am_radio.pl` does — mpv handles all the
@@ -66,6 +77,7 @@ class PlayerService extends ChangeNotifier {
 
   /// Start playing [station].  Stops any currently playing stream first.
   Future<void> play(Station station) async {
+    _log('play() called for station: ${station.name} (${station.url})');
     await stop();
 
     _currentStation = station;
@@ -74,6 +86,7 @@ class PlayerService extends ChangeNotifier {
 
     try {
       if (Platform.isLinux) {
+        _log('Starting mpv subprocess for Linux...');
         final process = await Process.start(
           'mpv',
           [
@@ -88,12 +101,14 @@ class PlayerService extends ChangeNotifier {
           mode: ProcessStartMode.normal,
         );
         _process = process;
+        _log('mpv started with PID: ${process.pid}');
 
         // React when mpv exits on its own (e.g. stream ends / network error).
         // Capture [process] so stale callbacks from a previous stream don't
         // overwrite state after play() has already been called for a new station.
-        process.exitCode.then((_) {
+        process.exitCode.then((exitCode) {
           if (identical(_process, process)) {
+            _log('mpv process exited with code: $exitCode');
             _isPlaying = false;
             _process = null;
             notifyListeners();
@@ -101,19 +116,25 @@ class PlayerService extends ChangeNotifier {
         });
       } else {
         // iOS / Android: use just_audio.
+        _log('Using just_audio for iOS/Android...');
         _audioPlayer ??= AudioPlayer();
 
         // Mark as buffering while the stream is being set up / connecting.
         _isBuffering = true;
         notifyListeners();
+        _log('Buffering started, setting URL...');
 
         await _audioPlayer!.setUrl(station.url);
+        _log('URL set, starting playback...');
         await _audioPlayer!.play();
+        _log('Playback started successfully');
 
         // Cancel any leftover subscription before attaching to the new stream.
         await _playingSub?.cancel();
         _playingSub = _audioPlayer!.playingStream.listen((isPlaying) {
+          _log('playingStream event: isPlaying=$isPlaying');
           if (!isPlaying && _isPlaying) {
+            _log('Stream stopped unexpectedly (possible audio drop)');
             _isPlaying = false;
             _isBuffering = false;
             notifyListeners();
@@ -124,10 +145,12 @@ class PlayerService extends ChangeNotifier {
         // buffering/connecting from actively streaming audio.
         await _processingSub?.cancel();
         _processingSub = _audioPlayer!.processingStateStream.listen((state) {
+          _log('processingStateStream event: $state');
           final buffering = state == ProcessingState.loading ||
               state == ProcessingState.buffering;
           if (buffering != _isBuffering) {
             _isBuffering = buffering;
+            _log('Buffering state changed: $_isBuffering');
             notifyListeners();
           }
         });
@@ -137,12 +160,14 @@ class PlayerService extends ChangeNotifier {
         _icySub = _audioPlayer!.icyMetadataStream.listen((meta) {
           final title = meta?.info?.title;
           if (title != _currentTrack) {
+            _log('Track changed: $title');
             _currentTrack = title;
             notifyListeners();
           }
         });
       }
     } catch (e) {
+      _log('ERROR in play(): $e');
       _isPlaying = false;
       _currentStation = null;
       notifyListeners();
@@ -152,6 +177,11 @@ class PlayerService extends ChangeNotifier {
 
   /// Stop the currently playing stream.
   Future<void> stop() async {
+    if (!_isPlaying && _process == null && _audioPlayer == null) {
+      _log('stop() called but nothing is playing');
+      return;
+    }
+    _log('stop() called');
     try {
       await _playingSub?.cancel();
       _playingSub = null;
@@ -161,10 +191,15 @@ class PlayerService extends ChangeNotifier {
       _icySub = null;
 
       if (_process != null) {
+        _log('Killing mpv process PID: ${_process!.pid}');
         _process!.kill();
         _process = null;
       }
-      await _audioPlayer?.stop();
+      if (_audioPlayer != null) {
+        _log('Stopping just_audio player');
+        await _audioPlayer?.stop();
+      }
+      _log('Playback stopped successfully');
     } finally {
       _isPlaying = false;
       _isBuffering = false;
@@ -175,6 +210,7 @@ class PlayerService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _log('dispose() called - cleaning up resources');
     _playingSub?.cancel();
     _processingSub?.cancel();
     _icySub?.cancel();
