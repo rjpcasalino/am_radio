@@ -7,6 +7,7 @@ import 'screens/home_screen.dart';
 import 'services/player_service.dart';
 import 'services/station_repository.dart';
 import 'services/log_service.dart';
+import 'services/settings_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,7 @@ void main() async {
   // On Linux without a desktop environment Flutter's dispose() chain is never
   // invoked when the process is killed, so we must stop mpv ourselves here.
   final logService = LogService();
+  final settingsService = SettingsService();
   final player = PlayerService(logService: logService);
   final stations = StationRepository();
 
@@ -49,6 +51,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: logService),
+        ChangeNotifierProvider.value(value: settingsService),
         ChangeNotifierProvider.value(value: player),
         ChangeNotifierProvider.value(value: stations),
       ],
@@ -56,10 +59,17 @@ void main() async {
     ),
   );
 
-  // Load saved stations asynchronously AFTER runApp to avoid blocking UI.
+  // Load settings and saved stations asynchronously AFTER runApp to avoid blocking UI.
   // This fixes the ~15s white screen issue on older devices where
   // SharedPreferences I/O would freeze the main thread before the first frame.
-  // The UI appears immediately and saved stations populate in the background.
+  // The UI appears immediately and data populates in the background.
+  logService.log('Loading settings...', level: LogLevel.debug);
+  settingsService.load().then((_) {
+    logService.log('Settings loaded successfully', level: LogLevel.info);
+  }).catchError((e) {
+    logService.log('Failed to load settings: $e', level: LogLevel.error);
+  });
+
   logService.log('Loading saved stations...', level: LogLevel.debug);
   stations.load().then((_) {
     logService.log('Saved stations loaded successfully', level: LogLevel.info);

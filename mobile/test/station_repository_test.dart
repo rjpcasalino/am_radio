@@ -1,9 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:am_radio/services/station_repository.dart';
 import 'package:am_radio/models/station.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    // Mock SharedPreferences for all tests
+    SharedPreferences.setMockInitialValues({});
+  });
 
   group('StationRepository', () {
     late StationRepository repository;

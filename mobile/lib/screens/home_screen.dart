@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../models/station.dart';
 import '../services/player_service.dart';
 import '../services/station_repository.dart';
+import '../services/settings_service.dart';
 import '../widgets/frequency_dial.dart';
 import '../widgets/radio_logo.dart';
 import '../widgets/signal_meter.dart';
@@ -142,13 +143,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final player = context.watch<PlayerService>();
     final repo = context.watch<StationRepository>();
+    final settings = context.watch<SettingsService>();
+    final minimalMode = settings.minimalMode;
+
     final stations =
         _isDefaultMode ? _effectiveStations(repo) : _stations;
     final currentIdx =
         stations.indexWhere((s) => s.url == player.currentStation?.url);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF1A0F00),
+      // Minimal mode: paper-like background, normal mode: vintage bakelite
+      backgroundColor: minimalMode ? const Color(0xFFF5F5F0) : const Color(0xFF1A0F00),
       body: SafeArea(
         child: Column(
           children: [
@@ -164,12 +169,37 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── A. Header / brand strip ────────────────────────────────────────────────
 
   Widget _buildHeader() {
+    final settings = context.watch<SettingsService>();
+    final minimalMode = settings.minimalMode;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const SizedBox(width: 40), // Balance the debug button
+          // Settings/Performance toggle
+          IconButton(
+            icon: Icon(
+              minimalMode ? Icons.speed : Icons.palette_outlined,
+              size: 20,
+              color: const Color(0xFF6B4400),
+            ),
+            tooltip: minimalMode ? 'Performance mode ON' : 'Enable performance mode',
+            padding: EdgeInsets.zero,
+            onPressed: () {
+              settings.setMinimalMode(!minimalMode);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    minimalMode
+                        ? 'Performance mode disabled'
+                        : 'Performance mode enabled - UI simplified for older devices',
+                  ),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
           const Center(child: RadioLogo(width: 90)),
           IconButton(
             icon: const Icon(
@@ -197,10 +227,54 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildDisplayPanel(
       PlayerService player, int currentIdx, List<Station> wheelStations) {
+    final settings = context.watch<SettingsService>();
+    final minimalMode = settings.minimalMode;
+
     final freq = currentIdx >= 0
         ? fakeFreqKHz(currentIdx, wheelStations.length)
         : 1020;
 
+    // Minimal mode: flat, paper-like design with no shadows or effects
+    if (minimalMode) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F0), // Paper-like off-white
+          borderRadius: BorderRadius.circular(2),
+          border: Border.all(color: const Color(0xFF888888), width: 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Station name
+            Text(
+              player.currentStation?.name ?? '─── off air ───',
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+                color: Color(0xFF000000),
+                fontWeight: FontWeight.bold,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            // Track info
+            Text(
+              player.currentTrack ?? '',
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                color: Color(0xFF444444),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Original fancy mode with shadows and effects
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
