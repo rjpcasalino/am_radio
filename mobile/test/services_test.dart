@@ -3,6 +3,8 @@ import 'package:am_radio/services/player_service.dart';
 import 'package:am_radio/models/station.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('PlayerService', () {
     late PlayerService playerService;
 

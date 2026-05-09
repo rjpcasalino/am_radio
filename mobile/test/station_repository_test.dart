@@ -3,6 +3,8 @@ import 'package:am_radio/services/station_repository.dart';
 import 'package:am_radio/models/station.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('StationRepository', () {
     late StationRepository repository;
 

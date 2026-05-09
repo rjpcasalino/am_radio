@@ -16,13 +16,6 @@ void main() async {
   final player = PlayerService();
   final stations = StationRepository();
 
-  // Don't block the main thread - load stations asynchronously after runApp.
-  // This allows the UI to appear immediately while saved stations load in
-  // the background, fixing the ~15s white screen issue on older devices.
-  stations.load().catchError((e) {
-    debugPrint('[StationRepository] Failed to load saved stations: $e');
-  });
-
   // Signal handlers are only meaningful on Linux (where mpv runs as a
   // subprocess).  iOS/Android apps are sandboxed — they don't receive POSIX
   // signals and cannot spawn external processes.
@@ -54,6 +47,14 @@ void main() async {
       child: const AmRadioApp(),
     ),
   );
+
+  // Load saved stations asynchronously AFTER runApp to avoid blocking UI.
+  // This fixes the ~15s white screen issue on older devices where
+  // SharedPreferences I/O would freeze the main thread before the first frame.
+  // The UI appears immediately and saved stations populate in the background.
+  stations.load().catchError((e) {
+    debugPrint('[StationRepository] Failed to load saved stations: $e');
+  });
 }
 
 class AmRadioApp extends StatelessWidget {
