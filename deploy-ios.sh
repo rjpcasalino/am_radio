@@ -94,11 +94,16 @@ check_prerequisites() {
 detect_device() {
     log_info "Scanning for connected iOS devices..."
 
-    # List Flutter-visible devices; filter for real iOS hardware (not simulators)
-    local device_list
-    device_list=$(flutter devices 2>/dev/null | grep -i "ios\|iphone\|ipad" | grep -v "simulator\|Simulator" || true)
+    # flutter devices output format (fields separated by ' • '):
+    #   <name> • <device-id> • <platform> • <os version>
+    # We filter for real iOS hardware (not simulators) then parse field 2.
+    local raw_devices
+    raw_devices=$(flutter devices 2>/dev/null \
+        | grep -i " ios " \
+        | grep -iv "simulator" \
+        || true)
 
-    if [[ -z "$device_list" ]]; then
+    if [[ -z "$raw_devices" ]]; then
         log_error "No iOS device found."
         echo ""
         echo "  Please:"
@@ -109,28 +114,15 @@ detect_device() {
         exit 1
     fi
 
-    echo "$device_list"
+    echo "$raw_devices"
     echo ""
 
     if [[ -z "$DEVICE_ID" ]]; then
-        # Auto-pick the first real device
-        DEVICE_ID=$(flutter devices 2>/dev/null \
-            | grep -i "ios\|iphone\|ipad" \
-            | grep -v "simulator\|Simulator" \
+        # Device ID is the second ' • '-delimited field on the first matching line.
+        DEVICE_ID=$(echo "$raw_devices" \
             | head -n1 \
-            | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
-            || true)
-
-        if [[ -z "$DEVICE_ID" ]]; then
-            # Fallback: grab the device identifier from the second column
-            DEVICE_ID=$(flutter devices 2>/dev/null \
-                | grep -i "ios\|iphone\|ipad" \
-                | grep -v "simulator\|Simulator" \
-                | head -n1 \
-                | awk '{print $2}' \
-                | tr -d '•' \
-                || true)
-        fi
+            | awk -F' • ' '{print $2}' \
+            | xargs)   # strip surrounding whitespace
     fi
 
     if [[ -z "$DEVICE_ID" ]]; then
@@ -149,6 +141,11 @@ build_app() {
 
     log_info "Building Flutter app (mode: $BUILD_MODE)..."
     cd mobile
+
+    # Flutter rewrites ios/Flutter/Debug.xcconfig and Release.xcconfig during
+    # pub get.  If git checked them out read-only (common on macOS), the write
+    # fails.  Ensure they are writable before proceeding.
+    chmod u+w ios/Flutter/Debug.xcconfig ios/Flutter/Release.xcconfig 2>/dev/null || true
 
     flutter pub get
 
