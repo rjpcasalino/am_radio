@@ -68,10 +68,10 @@ class _RadioLogoPainter extends CustomPainter {
     canvas.drawRRect(
       dialRRect,
       Paint()
-        ..shader = LinearGradient(
+        ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: const [Color(0xFF1A0F00), Color(0xFF0A0500)],
+          colors: [Color(0xFF1A0F00), Color(0xFF0A0500)],
         ).createShader(dialRect),
     );
 
