@@ -125,10 +125,21 @@ ${BOLD}Options:${RESET}
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
 
+${BOLD}Special station presets:${RESET}
+  --afn      Load American Forces Network (AFN) stations
+             Includes AFN 360, The Voice, PowerTalk, Freedom, Legacy,
+             Hot AC, Country, Gravity, Joe Radio, and regional stations
+             for Europe (Benelux) and Pacific (Eagle, Tokyo)
+
 ${BOLD}Discovery examples:${RESET}
   $name -f                     # Interactive menu (by country, region, tag, etc.)
   $name -f 'jazz'              # Quick search for stations with 'jazz' in name
   $name -f 'BBC'               # Quick search for 'BBC' stations
+
+${BOLD}AFN examples:${RESET}
+  $name --afn -l               # List all AFN stations
+  $name --afn -t               # Launch TUI with AFN stations
+  $name --afn -s 1             # Play AFN 360 (first station)
 
 ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
@@ -1407,6 +1418,74 @@ sub radio_tui {
     $cleanup->();
 }
 
+# ------------------------------------------------------------------------------
+# load_afn_stations - Replace the current station list with American Forces
+# Network (AFN) streaming stations. AFN provides radio and TV programming to
+# U.S. military personnel and their families stationed around the world.
+#
+# This preset includes the major AFN radio networks covering different regions:
+#   - AFN 360 (various global streams)
+#   - AFN Pacific (Japan, Korea, Guam)
+#   - AFN Europe (Germany, Italy, UK bases)
+#   - AFN The Voice (talk radio)
+#   - AFN PowerTalk (sports radio)
+#   - AFN Freedom (news radio)
+#   - AFN Legacy (oldies)
+#   - AFN Hot AC (adult contemporary)
+#
+# Stream URLs are sourced from AFN's official myAFN platform and public
+# streaming endpoints maintained by the Defense Media Activity.
+# ------------------------------------------------------------------------------
+sub load_afn_stations {
+    print "${CYAN}Loading American Forces Network (AFN) stations...${RESET}\n";
+
+    # Clear existing stations and load AFN presets
+    @STATIONS = ();
+
+    # AFN 360 - Main music service (multiple streams for different regions)
+    push @STATIONS, 'AFN 360 Internet Radio::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_360_AUDIO.mp3';
+
+    # AFN The Voice - Talk radio format
+    push @STATIONS, 'AFN The Voice::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_VOICE.mp3';
+
+    # AFN PowerTalk - Sports and talk
+    push @STATIONS, 'AFN PowerTalk::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_POWERTALK.mp3';
+
+    # AFN Freedom - News/talk format
+    push @STATIONS, 'AFN Freedom::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_FREEDOM.mp3';
+
+    # AFN Legacy - Classic hits/oldies
+    push @STATIONS, 'AFN Legacy::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_LEGACY.mp3';
+
+    # AFN Hot AC - Hot Adult Contemporary
+    push @STATIONS, 'AFN Hot AC::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_HOTAC.mp3';
+
+    # AFN Country - Country music
+    push @STATIONS, 'AFN Country::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_COUNTRY.mp3';
+
+    # AFN Gravity - Modern hits
+    push @STATIONS, 'AFN Gravity::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_GRAVITY.mp3';
+
+    # AFN Joe Radio - Mix format
+    push @STATIONS, 'AFN Joe Radio::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_JOE.mp3';
+
+    # AFN Benelux (Europe)
+    push @STATIONS, 'AFN Benelux::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_BENELUX.mp3';
+
+    # AFN Europe - Legacy (Wiesbaden, Germany)
+    push @STATIONS, 'AFN Europe Legacy::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_LEGACY_EURO.mp3';
+
+    # AFN Pacific - The Eagle (Japan/Pacific)
+    push @STATIONS, 'AFN Pacific Eagle::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_EAGLE.mp3';
+
+    # AFN Tokyo/Yokota
+    push @STATIONS, 'AFN Tokyo::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_TOKYO.mp3';
+
+    my $count = scalar @STATIONS;
+    print "${GREEN}Loaded $count AFN radio stations.${RESET}\n";
+    print "${DIM}American Forces Network - Serving U.S. military worldwide${RESET}\n\n";
+}
+
 # ==============================================================================
 # ARGUMENT PARSING
 # ==============================================================================
@@ -1415,6 +1494,16 @@ my $STATION_CHOICE   = '';
 my $FILTER_OLD_RADIO = 0;
 my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
+my $AFN_MODE         = 0;
+
+# Check for --afn long option in ARGV before getopts processes anything
+# This must happen before getopts because getopts doesn't handle long options
+for my $i (reverse 0 .. $#ARGV) {
+    if ($ARGV[$i] eq '--afn') {
+        $AFN_MODE = 1;
+        splice(@ARGV, $i, 1);  # Remove --afn from ARGV
+    }
+}
 
 my %opts;
 unless (getopts('s:f:loithv', \%opts)) {
@@ -1423,6 +1512,11 @@ unless (getopts('s:f:loithv', \%opts)) {
 }
 
 show_help() if $opts{h};
+
+# If AFN mode is enabled, load AFN stations instead of the config file
+if ($AFN_MODE) {
+    load_afn_stations();
+}
 
 if ($opts{l}) {
     list_stations();

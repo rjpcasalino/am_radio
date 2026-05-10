@@ -21,6 +21,7 @@ Requires [`mpv`](https://mpv.io/) if running on Linux.
   - Language
   - Advanced multi-criteria search
   - See [SEARCH_GUIDE.md](SEARCH_GUIDE.md) for detailed usage
+- **AFN Preset**: Built-in American Forces Network station list with `--afn` flag
 - **Lo-Fi Filter**: Vintage AM radio audio effect (Linux only)
 
 ## Quick Start
@@ -42,6 +43,11 @@ perl am_radio.pl -f "jazz"
 
 # Interactive discovery menu (by country, region, tag, language)
 perl am_radio.pl -f
+
+# AFN (American Forces Network) preset stations
+perl am_radio.pl --afn -l        # List all AFN stations
+perl am_radio.pl --afn -t        # TUI mode with AFN stations
+perl am_radio.pl --afn -s 1      # Play AFN 360
 ```
 
 Example output:
