@@ -101,7 +101,7 @@ class _LogEntryTile extends StatelessWidget {
         color: const Color(0xFF0A0500),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: levelColor.withOpacity(0.3),
+          color: levelColor.withValues(alpha: 0.3),
           width: 1,
         ),
       ),
@@ -113,7 +113,7 @@ class _LogEntryTile extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: levelColor.withOpacity(0.2),
+                  color: levelColor.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(3),
                 ),
                 child: Text(
