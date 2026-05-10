@@ -115,12 +115,20 @@ Play and discover internet radio streams directly from the command line.
 ${BOLD}Options:${RESET}
   -s NUM     Select station by number (e.g., -s 2)
   -l         List all saved stations
-  -f QUERY   Find/discover new stations on the web (e.g., -f 'jazz')
+  -f [QUERY] Find/discover new stations on Radio-Browser.info
+             * With QUERY: quick name search (e.g., -f 'jazz', -f 'BBC')
+             * Without QUERY: interactive menu to search by country, region,
+               language, tag/genre, or advanced multi-criteria search
   -o         Enable 'Old Time Radio' audio filter (lo-fi AM sound)
   -i         Dump initial station metadata (ffprobe required)
   -t         Tuner mode: vintage TUI with dial, signal meter and ON AIR lamp
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
+
+${BOLD}Discovery examples:${RESET}
+  $name -f                     # Interactive menu (by country, region, tag, etc.)
+  $name -f 'jazz'              # Quick search for stations with 'jazz' in name
+  $name -f 'BBC'               # Quick search for 'BBC' stations
 
 ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
@@ -175,19 +183,159 @@ sub run_capture {
     return $output;
 }
 
-sub discover_stations {
-    my ($query) = @_;
-
+# ------------------------------------------------------------------------------
+# discover_stations_interactive - presents a menu-driven interface for
+# discovering radio stations by various search criteria:
+#   1) Simple name/keyword search (original behavior)
+#   2) Search by country (e.g., "USA", "Germany", "Brazil")
+#   3) Search by country + state/region (e.g., "USA" then "California")
+#   4) Search by tag (e.g., "jazz", "classical", "news")
+#   5) Search by language (e.g., "english", "spanish", "french")
+#
+# This makes Radio-Browser.info exploration much deeper, allowing users to
+# discover stations by geography and genre rather than just station name.
+# ------------------------------------------------------------------------------
+sub discover_stations_interactive {
     if (system("command -v curl > /dev/null 2>&1") != 0) {
         print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
         exit 1;
     }
 
-    print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
+    print "\n${BOLD}${CYAN}╔═══════════════════════════════════════════════════════════╗${RESET}\n";
+    print "${BOLD}${CYAN}║      Radio Station Discovery - Radio-Browser.info        ║${RESET}\n";
+    print "${BOLD}${CYAN}╚═══════════════════════════════════════════════════════════╝${RESET}\n\n";
 
-    my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
-                . '?name=' . uri_escape($query)
-                . '&limit=10&hidebroken=true';
+    print "Search options:\n";
+    print "  ${CYAN}1)${RESET} By station name or keyword (e.g., 'jazz', 'BBC', 'rock')\n";
+    print "  ${CYAN}2)${RESET} By country (e.g., 'USA', 'Germany', 'Japan')\n";
+    print "  ${CYAN}3)${RESET} By country + state/region (e.g., 'USA' + 'California')\n";
+    print "  ${CYAN}4)${RESET} By tag/genre (e.g., 'classical', 'news', 'electronic')\n";
+    print "  ${CYAN}5)${RESET} By language (e.g., 'english', 'spanish', 'french')\n";
+    print "  ${CYAN}6)${RESET} Advanced multi-criteria search\n\n";
+
+    print "Select search type [1-6]: ";
+    my $search_type = <STDIN>;
+    chomp $search_type if defined $search_type;
+
+    # Build the API URL based on user's choice
+    my $api_url;
+    my $search_desc;
+
+    if ($search_type eq '1') {
+        # Simple name/keyword search (original behavior)
+        print "Enter station name or keyword: ";
+        my $query = <STDIN>;
+        chomp $query if defined $query;
+        return unless length $query;
+
+        $search_desc = "stations matching '$query'";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?name=' . uri_escape($query)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '2') {
+        # Search by country
+        print "Enter country name or code (e.g., 'USA', 'Germany', 'Brazil'): ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+        return unless length $country;
+
+        $search_desc = "stations in $country";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?country=' . uri_escape($country)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '3') {
+        # Search by country + state
+        print "Enter country (e.g., 'USA', 'Australia', 'Canada'): ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+        return unless length $country;
+
+        print "Enter state/region (e.g., 'California', 'New South Wales', 'Ontario'): ";
+        my $state = <STDIN>;
+        chomp $state if defined $state;
+        return unless length $state;
+
+        $search_desc = "stations in $state, $country";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?country=' . uri_escape($country)
+                 . '&state=' . uri_escape($state)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '4') {
+        # Search by tag/genre
+        print "Enter tag/genre (e.g., 'jazz', 'classical', 'news', 'rock'): ";
+        my $tag = <STDIN>;
+        chomp $tag if defined $tag;
+        return unless length $tag;
+
+        $search_desc = "stations tagged with '$tag'";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?tag=' . uri_escape($tag)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '5') {
+        # Search by language
+        print "Enter language (e.g., 'english', 'spanish', 'french', 'german'): ";
+        my $lang = <STDIN>;
+        chomp $lang if defined $lang;
+        return unless length $lang;
+
+        $search_desc = "stations broadcasting in $lang";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?language=' . uri_escape($lang)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '6') {
+        # Advanced multi-criteria search
+        print "\n${BOLD}Advanced Search - leave blank to skip any field${RESET}\n";
+
+        print "Station name/keyword: ";
+        my $name = <STDIN>;
+        chomp $name if defined $name;
+
+        print "Country: ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+
+        print "State/Region: ";
+        my $state = <STDIN>;
+        chomp $state if defined $state;
+
+        print "Tag/Genre: ";
+        my $tag = <STDIN>;
+        chomp $tag if defined $tag;
+
+        print "Language: ";
+        my $lang = <STDIN>;
+        chomp $lang if defined $lang;
+
+        # Build URL with all provided parameters
+        my @params;
+        push @params, 'name=' . uri_escape($name) if length $name;
+        push @params, 'country=' . uri_escape($country) if length $country;
+        push @params, 'state=' . uri_escape($state) if length $state;
+        push @params, 'tag=' . uri_escape($tag) if length $tag;
+        push @params, 'language=' . uri_escape($lang) if length $lang;
+
+        if (@params == 0) {
+            print "${YELLOW}No search criteria provided.${RESET}\n";
+            return;
+        }
+
+        $search_desc = "stations matching your criteria";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?' . join('&', @params)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } else {
+        print "${YELLOW}Invalid selection.${RESET}\n";
+        return;
+    }
+
+    # Execute the search
+    print "\n${BOLD}${CYAN}>> Searching for $search_desc...${RESET}\n\n";
 
     # Pass --max-time so a hung server can't freeze us forever.
     my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
@@ -195,29 +343,62 @@ sub discover_stations {
     my $data = eval { decode_json($response // '') };
     if ($@ || ref($data) ne 'ARRAY') {
         print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
+        print STDERR "${DIM}(Network issue or API temporarily unavailable)${RESET}\n";
         exit 1;
     }
 
     my $count = scalar @$data;
     if ($count == 0) {
         print "No active stations found for that query.\n";
+        print "${DIM}Try broadening your search criteria or different keywords.${RESET}\n";
         exit 0;
     }
 
+    # Display results with enhanced metadata
+    print "${GREEN}Found $count station(s):${RESET}\n\n";
     for my $i (0 .. $count - 1) {
         my $s = $data->[$i];
-        my $name    = $s->{name}    // '(unknown)';
-        my $bitrate = $s->{bitrate} // 0;
-        my $tags    = $s->{tags}    // '';
+        my $name     = $s->{name}    // '(unknown)';
+        my $bitrate  = $s->{bitrate} // 0;
+        my $country  = $s->{country} // '';
+        my $state    = $s->{state}   // '';
+        my $tags     = $s->{tags}    // '';
+        my $language = $s->{language} // '';
+        my $votes    = $s->{votes}   // 0;
 
-        printf "  %s%d)%s %s%s%s (%s kbps)\n",
-            $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET, $bitrate;
-        if (length $tags) {
-            print "     ${YELLOW}Tags:${RESET} $tags\n";
+        # Format the station entry
+        printf "  %s%2d)%s %s%s%s\n",
+            $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET;
+
+        # Display location info if available
+        my @location;
+        push @location, $state if length $state;
+        push @location, $country if length $country;
+        if (@location) {
+            printf "      ${DIM}Location:${RESET} %s\n", join(', ', @location);
         }
+
+        # Display bitrate and vote count
+        printf "      ${DIM}Quality:${RESET} %s kbps", $bitrate;
+        printf " ${DIM}|${RESET} ${DIM}Votes:${RESET} %s", $votes if $votes > 0;
+        print "\n";
+
+        # Display language if available
+        if (length $language) {
+            print "      ${DIM}Language:${RESET} $language\n";
+        }
+
+        # Display tags if available
+        if (length $tags) {
+            my $tags_truncated = length($tags) > 60 ? substr($tags, 0, 57) . '...' : $tags;
+            print "      ${YELLOW}Tags:${RESET} $tags_truncated\n";
+        }
+
+        print "\n" if $i < $count - 1;  # Blank line between entries
     }
 
-    print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
+    # Prompt user to save a station
+    print "\n${BOLD}Enter a number to SAVE to your list (or press Enter to exit): ${RESET}";
     my $choice = <STDIN>;
     chomp $choice if defined $choice;
 
@@ -226,13 +407,91 @@ sub discover_stations {
         my $name = $picked->{name} // 'Unknown Station';
         my $url  = $picked->{url}  // '';
 
+        # Append to the config file
         open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
         print $out $name . '::' . $url . "\n";
         close($out);
 
-        print "${GREEN}[OK] Saved '$name' to $CONFIG_FILE!${RESET}\n";
+        print "${GREEN}[✓] Saved '$name' to $CONFIG_FILE!${RESET}\n";
     }
     exit 0;
+}
+
+# ------------------------------------------------------------------------------
+# discover_stations - wrapper for backward compatibility with -f flag.
+# If a query is provided via -f, it goes directly to a simple name search.
+# If no query is provided, launches the interactive menu.
+# ------------------------------------------------------------------------------
+sub discover_stations {
+    my ($query) = @_;
+
+    if (system("command -v curl > /dev/null 2>&1") != 0) {
+        print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
+        exit 1;
+    }
+
+    # If a query was provided with -f, do a quick name search (original behavior)
+    if (defined $query && length $query) {
+        print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
+
+        my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                    . '?name=' . uri_escape($query)
+                    . '&limit=15&hidebroken=true&order=votes&reverse=true';
+
+        # Pass --max-time so a hung server can't freeze us forever.
+        my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
+
+        my $data = eval { decode_json($response // '') };
+        if ($@ || ref($data) ne 'ARRAY') {
+            print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
+            exit 1;
+        }
+
+        my $count = scalar @$data;
+        if ($count == 0) {
+            print "No active stations found for that query.\n";
+            exit 0;
+        }
+
+        # Display results with enhanced info
+        for my $i (0 .. $count - 1) {
+            my $s = $data->[$i];
+            my $name     = $s->{name}    // '(unknown)';
+            my $bitrate  = $s->{bitrate} // 0;
+            my $country  = $s->{country} // '';
+            my $tags     = $s->{tags}    // '';
+
+            printf "  %s%d)%s %s%s%s (%s kbps)",
+                $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET, $bitrate;
+            print " ${DIM}- $country${RESET}" if length $country;
+            print "\n";
+
+            if (length $tags) {
+                my $tags_short = length($tags) > 60 ? substr($tags, 0, 57) . '...' : $tags;
+                print "     ${YELLOW}Tags:${RESET} $tags_short\n";
+            }
+        }
+
+        print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
+        my $choice = <STDIN>;
+        chomp $choice if defined $choice;
+
+        if (defined $choice && $choice =~ /^\d+$/ && $choice >= 1 && $choice <= $count) {
+            my $picked = $data->[$choice - 1];
+            my $name = $picked->{name} // 'Unknown Station';
+            my $url  = $picked->{url}  // '';
+
+            open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
+            print $out $name . '::' . $url . "\n";
+            close($out);
+
+            print "${GREEN}[OK] Saved '$name' to $CONFIG_FILE!${RESET}\n";
+        }
+        exit 0;
+    }
+
+    # No query provided - launch interactive menu
+    discover_stations_interactive();
 }
 
 # ------------------------------------------------------------------------------
