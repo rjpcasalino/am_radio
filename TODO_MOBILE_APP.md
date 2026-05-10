@@ -131,7 +131,7 @@ The app already implements async loading (see `mobile/lib/main.dart:76-102`):
 - [ ] **Splash screen not configured**: iOS might be showing a blank screen instead of a proper splash
 
 **Ideas to improve startup time:**
-- [x] **Add iOS launch storyboard**: `LaunchScreen.storyboard` updated — dark bakelite background (#1A0F00) with centred "AM·RADIO" label in amber
+- [x] **Add iOS launch storyboard**: `LaunchScreen.storyboard` updated — dark bakelite background (#1A0F00) with centered "AM·RADIO" label in amber
 - [ ] **Profile startup with Flutter DevTools**: Use Timeline view to identify which widgets/services are taking the most time in the first frame
 - [ ] **Lazy-load heavy widgets**: Defer rendering FrequencyDial/SignalMeter until after first frame using `FutureBuilder` or `addPostFrameCallback`
 - [ ] **Precompile RegExp/constants**: Move any runtime parsing/computation in widget build methods to static initialization
