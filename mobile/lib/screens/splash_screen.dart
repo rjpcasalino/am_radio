@@ -17,8 +17,16 @@ class SplashScreen extends StatefulWidget {
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  late final CurvedAnimation _curved;
   late final Animation<Offset> _leftSlide;
   late final Animation<Offset> _rightSlide;
+
+  static const TextStyle _titleStyle = TextStyle(
+    fontSize: 36,
+    fontWeight: FontWeight.bold,
+    fontFamily: 'monospace',
+    color: Color(0xFFF0E0B0), // cream — readable on dark bakelite
+  );
 
   @override
   void initState() {
@@ -29,7 +37,7 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 800),
     );
 
-    final curved = CurvedAnimation(
+    _curved = CurvedAnimation(
       parent: _controller,
       curve: Curves.easeInOut,
     );
@@ -37,12 +45,12 @@ class _SplashScreenState extends State<SplashScreen>
     _leftSlide = Tween<Offset>(
       begin: const Offset(-2.0, 0),
       end: Offset.zero,
-    ).animate(curved);
+    ).animate(_curved);
 
     _rightSlide = Tween<Offset>(
       begin: const Offset(2.0, 0),
       end: Offset.zero,
-    ).animate(curved);
+    ).animate(_curved);
 
     // Slide in, hold for a moment, then navigate.
     _controller.forward().then((_) {
@@ -63,6 +71,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    _curved.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -77,27 +86,11 @@ class _SplashScreenState extends State<SplashScreen>
           children: [
             SlideTransition(
               position: _leftSlide,
-              child: const Text(
-                'AM_',
-                style: TextStyle(
-                  fontSize: 36,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                  color: Color(0xFFF0E0B0), // cream — readable on dark bakelite
-                ),
-              ),
+              child: const Text('AM_', style: _titleStyle),
             ),
             SlideTransition(
               position: _rightSlide,
-              child: const Text(
-                'RADIO',
-                style: TextStyle(
-                  fontSize: 36,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                  color: Color(0xFFF0E0B0),
-                ),
-              ),
+              child: const Text('RADIO', style: _titleStyle),
             ),
           ],
         ),
