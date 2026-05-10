@@ -46,7 +46,9 @@ class _SignalMeterState extends State<SignalMeter> {
   void didUpdateWidget(SignalMeter old) {
     super.didUpdateWidget(old);
     if (widget.isPlaying == old.isPlaying &&
-        widget.isBuffering == old.isBuffering) return;
+        widget.isBuffering == old.isBuffering) {
+      return;
+    }
     if (widget.isPlaying && !widget.isBuffering) {
       _startMeter();
     } else if (!widget.isPlaying) {

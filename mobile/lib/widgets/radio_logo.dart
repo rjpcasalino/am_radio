@@ -60,8 +60,7 @@ class _RadioLogoPainter extends CustomPainter {
 
     // ── Dial window ────────────────────────────────────────────────────────
     final dialLeft = grillRight + 5;
-    final dialRect =
-        Rect.fromLTWH(dialLeft, 4, w - dialLeft - 4, h - 8);
+    final dialRect = Rect.fromLTWH(dialLeft, 4, w - dialLeft - 4, h - 8);
     final dialRRect =
         RRect.fromRectAndRadius(dialRect, const Radius.circular(3));
 
@@ -69,10 +68,10 @@ class _RadioLogoPainter extends CustomPainter {
     canvas.drawRRect(
       dialRRect,
       Paint()
-        ..shader = LinearGradient(
+        ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: const [Color(0xFF1A0F00), Color(0xFF0A0500)],
+          colors: [Color(0xFF1A0F00), Color(0xFF0A0500)],
         ).createShader(dialRect),
     );
 
