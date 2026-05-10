@@ -91,6 +91,61 @@ your device, and press ▶ (Run).  This is equivalent to debug deploy.
 - [ ] Minimal mode: refine A4-paper print feel (hairline rules, bold name, italic genre)
 - [ ] Dark-mode variant of minimal mode (white-on-black terminal aesthetic)
 
+### iOS — Deployment pain points
+
+**Code signing / trust workflow issues:**
+
+The current workflow for installing on iOS with a free Apple ID requires:
+1. Opening Xcode to add Apple ID (one-time)
+2. USB connection + trusting the Mac
+3. Running deploy script or Xcode
+4. **Manually trusting the developer certificate on the physical device** (Settings → General → VPN & Device Management → Developer App → Trust)
+5. Re-signing and reinstalling every 7 days when the certificate expires
+
+**Ideas to improve:**
+- [ ] **Automated certificate trust prompt**: Investigate if there's a way to programmatically trigger the trust dialog or provide clearer post-install instructions
+- [ ] **TestFlight distribution**: For testers with Apple IDs, distributing via TestFlight removes the 7-day expiry and trust step (requires paid Apple Developer account $99/yr)
+- [ ] **Enterprise distribution**: For organizations, Apple Developer Enterprise Program allows in-house app distribution without App Store (requires special approval + $299/yr)
+- [ ] **Clearer documentation**: Add screenshots to the TODO/README showing the Settings → General → VPN & Device Management path, as this step is not obvious
+- [ ] **Post-install notification**: Add a Flutter dialog on first launch that detects untrusted cert state and guides user to Settings
+- [ ] **Deploy script enhancement**: Have `deploy-ios.sh` print the exact Settings path and wait for user confirmation before exiting
+- [ ] **CI/CD integration**: Explore GitHub Actions self-hosted runner on macOS with provisioning profiles for automated TestFlight uploads
+
+**Current workaround:**
+Users must manually navigate to Settings and trust the certificate after each install. This is an iOS platform limitation for apps signed with free Personal Team certificates.
+
+### Performance — App startup optimization
+
+**Current implementation:**
+The app already implements async loading (see `mobile/lib/main.dart:76-102`):
+- Services (LogService, SettingsService, PlayerService, StationRepository) are instantiated synchronously before `runApp()`
+- Settings and saved stations are loaded asynchronously AFTER `runApp()` via `settingsService.load()` and `stations.load()`
+- This should display the UI immediately with default stations while data loads in the background
+
+**Potential causes of perceived startup delay:**
+- [ ] **Widget build overhead**: First frame may be delayed by complex widget tree (FrequencyDial, SignalMeter, RadioLogo)
+- [ ] **SharedPreferences I/O**: Even though async, the platform channel call might briefly block on slower devices
+- [ ] **Provider initialization**: MultiProvider with 4 ChangeNotifiers might add overhead
+- [ ] **iOS-specific**: AVFoundation/AudioPlayer initialization, though currently lazy (created on first play)
+- [ ] **Theme/font loading**: Material 3 theme and monospace font might delay first frame
+- [ ] **Splash screen not configured**: iOS might be showing a blank screen instead of a proper splash
+
+**Ideas to improve startup time:**
+- [ ] **Add iOS launch storyboard**: Configure `ios/Runner/Assets.xcassets/LaunchImage.imageset` and `LaunchScreen.storyboard` to show app logo during native launch
+- [ ] **Profile startup with Flutter DevTools**: Use Timeline view to identify which widgets/services are taking the most time in the first frame
+- [ ] **Lazy-load heavy widgets**: Defer rendering FrequencyDial/SignalMeter until after first frame using `FutureBuilder` or `addPostFrameCallback`
+- [ ] **Precompile RegExp/constants**: Move any runtime parsing/computation in widget build methods to static initialization
+- [ ] **Reduce initial widget tree depth**: Show a simplified UI skeleton first, then swap in full widgets after loaded
+- [ ] **Isolate for I/O**: Move SharedPreferences reads to a separate isolate to avoid any main-thread blocking (likely overkill for small data)
+- [ ] **Profile SharedPreferences overhead**: Log timestamps around `prefs.getString()` calls to measure actual I/O time
+- [ ] **Enable impeller on iOS**: Flutter's new rendering engine (enabled by default in recent Flutter versions) may improve first-frame time
+- [ ] **Measure baseline**: Add more detailed logging around widget build phases (initState, build, first paint) to quantify the delay
+
+**Recommended first steps:**
+1. Profile with Flutter DevTools Timeline to identify actual bottlenecks
+2. Add iOS launch storyboard for immediate visual feedback
+3. Log first-frame timing in `main.dart` after `runApp()` returns
+
 ## iOS — Decision record
 
 **Chosen: Flutter (extend existing codebase, add `--platforms ios`)**
