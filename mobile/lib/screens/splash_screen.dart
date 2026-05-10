@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'home_screen.dart';
@@ -20,6 +22,7 @@ class _SplashScreenState extends State<SplashScreen>
   late final CurvedAnimation _curved;
   late final Animation<Offset> _leftSlide;
   late final Animation<Offset> _rightSlide;
+  Timer? _navTimer;
 
   static const TextStyle _titleStyle = TextStyle(
     fontSize: 36,
@@ -55,7 +58,7 @@ class _SplashScreenState extends State<SplashScreen>
     // Slide in, hold for a moment, then navigate.
     _controller.forward().then((_) {
       if (!mounted) return;
-      Future.delayed(const Duration(milliseconds: 500), () {
+      _navTimer = Timer(const Duration(milliseconds: 500), () {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
@@ -71,6 +74,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    _navTimer?.cancel();
     _curved.dispose();
     _controller.dispose();
     super.dispose();
