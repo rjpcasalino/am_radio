@@ -14,7 +14,13 @@ Requires [`mpv`](https://mpv.io/) if running on Linux.
 - **Mobile App**: Flutter app for Android, iOS, and Linux desktop
 - Minimal UI mode for older devices (A4 paper-like design)
 - **In-App Debug Logs**: View and export logs directly from the mobile app
-- **Station Discovery**: Search radio-browser.info for streams
+- **Station Discovery**: Search radio-browser.info for streams by:
+  - Station name/keyword
+  - Country and region/state
+  - Tag/genre (jazz, classical, news, rock, etc.)
+  - Language
+  - Advanced multi-criteria search
+  - See [SEARCH_GUIDE.md](SEARCH_GUIDE.md) for detailed usage
 - **Lo-Fi Filter**: Vintage AM radio audio effect (Linux only)
 
 ## Quick Start
@@ -33,6 +39,9 @@ perl am_radio.pl -t
 
 # Discover stations
 perl am_radio.pl -f "jazz"
+
+# Interactive discovery menu (by country, region, tag, language)
+perl am_radio.pl -f
 ```
 
 Example output:
