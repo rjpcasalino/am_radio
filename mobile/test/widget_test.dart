@@ -37,5 +37,7 @@ void main() {
     expect(find.byType(MaterialApp), findsOneWidget);
 
     playerService.dispose();
+    stationRepository.dispose();
+    settingsService.dispose();
   });
 }
