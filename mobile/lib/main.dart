@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/player_service.dart';
 import 'services/station_repository.dart';
 import 'services/log_service.dart';
@@ -127,7 +128,7 @@ class AmRadioApp extends StatelessWidget {
         fontFamily: 'monospace',
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: const SplashScreen(),
     );
   }
 }
