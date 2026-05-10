@@ -127,9 +127,9 @@ ${BOLD}Options:${RESET}
 
 ${BOLD}Special station presets:${RESET}
   --afn      Load American Forces Network (AFN) stations
-             Includes AFN 360, The Voice, PowerTalk, Freedom, Legacy,
-             Hot AC, Country, Gravity, Joe Radio, and regional stations
-             for Europe (Benelux) and Pacific (Eagle, Tokyo)
+             Includes AFN GO (Tokyo, Humphreys, Bahrain), AFN 360 stations
+             from Guantanamo Bay, Bahrain, Benelux, Bavaria, Vicenza,
+             Wiesbaden, and AFN İncirlik (Turkey)
 
 ${BOLD}Discovery examples:${RESET}
   $name -f                     # Interactive menu (by country, region, tag, etc.)
@@ -1423,18 +1423,13 @@ sub radio_tui {
 # Network (AFN) streaming stations. AFN provides radio and TV programming to
 # U.S. military personnel and their families stationed around the world.
 #
-# This preset includes the major AFN radio networks covering different regions:
-#   - AFN 360 (various global streams)
-#   - AFN Pacific (Japan, Korea, Guam)
-#   - AFN Europe (Germany, Italy, UK bases)
-#   - AFN The Voice (talk radio)
-#   - AFN PowerTalk (sports radio)
-#   - AFN Freedom (news radio)
-#   - AFN Legacy (oldies)
-#   - AFN Hot AC (adult contemporary)
+# This preset includes AFN stations from various global locations:
+#   - AFN Pacific (Tokyo, Humphreys Korea)
+#   - AFN Europe (Germany, Italy, Belgium, Bahrain)
+#   - AFN locations (Guantanamo Bay, Turkey)
 #
-# Stream URLs are sourced from AFN's official myAFN platform and public
-# streaming endpoints maintained by the Defense Media Activity.
+# Stream URLs are sourced from Radio-Browser.info verified working endpoints.
+# All streams tested and confirmed operational as of January 2026.
 # ------------------------------------------------------------------------------
 sub load_afn_stations {
     print "${CYAN}Loading American Forces Network (AFN) stations...${RESET}\n";
@@ -1442,44 +1437,35 @@ sub load_afn_stations {
     # Clear existing stations and load AFN presets
     @STATIONS = ();
 
-    # AFN 360 - Main music service (multiple streams for different regions)
-    push @STATIONS, 'AFN 360 Internet Radio::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_360_AUDIO.mp3';
+    # AFN GO Tokyo (Japan) - 96 kbps MP3, 192 votes
+    push @STATIONS, 'AFN GO Tokyo::http://22963.live.streamtheworld.com/AFNP_TKO_SC';
 
-    # AFN The Voice - Talk radio format
-    push @STATIONS, 'AFN The Voice::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_VOICE.mp3';
+    # AFN 360 Guantanamo Bay (Cuba) - 96 kbps MP3, 1745 votes
+    push @STATIONS, 'AFN 360 Guantanamo Bay::http://27783.live.streamtheworld.com:3690/AFNE_GMO_SC';
 
-    # AFN PowerTalk - Sports and talk
-    push @STATIONS, 'AFN PowerTalk::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_POWERTALK.mp3';
+    # AFN GO Humphreys The Eagle (South Korea) - 32 kbps AAC+, 6 votes
+    push @STATIONS, 'AFN GO Humphreys The Eagle::http://14993.live.streamtheworld.com/AFNP_OSNAAC_SC';
 
-    # AFN Freedom - News/talk format
-    push @STATIONS, 'AFN Freedom::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_FREEDOM.mp3';
+    # AFN 360 Bahrain (Bahrain) - 96 kbps MP3, 972 votes
+    push @STATIONS, 'AFN 360 Bahrain::http://27863.live.streamtheworld.com/AFNE_BHN_SC';
 
-    # AFN Legacy - Classic hits/oldies
-    push @STATIONS, 'AFN Legacy::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_LEGACY.mp3';
+    # AFN 360 Benelux (Belgium) - 96 kbps MP3, 31 votes
+    push @STATIONS, 'AFN 360 Benelux::http://28993.live.streamtheworld.com:3690/AFNE_BLX_SC';
 
-    # AFN Hot AC - Hot Adult Contemporary
-    push @STATIONS, 'AFN Hot AC::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_HOTAC.mp3';
+    # AFN İncirlik (Turkey) - 96 kbps MP3
+    push @STATIONS, 'AFN İncirlik::https://playerservices.streamtheworld.com/api/livestream-redirect/AFNE_ICK.mp3';
 
-    # AFN Country - Country music
-    push @STATIONS, 'AFN Country::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_COUNTRY.mp3';
+    # AFN 360 Bavaria (Germany) - 96 kbps MP3, 102 votes
+    push @STATIONS, 'AFN 360 Bavaria::http://28563.live.streamtheworld.com/AFNE_BAV_SC';
 
-    # AFN Gravity - Modern hits
-    push @STATIONS, 'AFN Gravity::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_GRAVITY.mp3';
+    # AFN 360 Vicenza (Italy) - 96 kbps MP3, 43 votes
+    push @STATIONS, 'AFN 360 Vicenza::http://23543.live.streamtheworld.com/AFNE_VIC_SC';
 
-    # AFN Joe Radio - Mix format
-    push @STATIONS, 'AFN Joe Radio::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_JOE.mp3';
+    # AFN 360 Wiesbaden (Germany) - 96 kbps MP3, 130 votes
+    push @STATIONS, 'AFN 360 Wiesbaden::http://25453.live.streamtheworld.com:3690/AFNE_WBN_SC';
 
-    # AFN Benelux (Europe)
-    push @STATIONS, 'AFN Benelux::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_BENELUX.mp3';
-
-    # AFN Europe - Legacy (Wiesbaden, Germany)
-    push @STATIONS, 'AFN Europe Legacy::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_LEGACY_EURO.mp3';
-
-    # AFN Pacific - The Eagle (Japan/Pacific)
-    push @STATIONS, 'AFN Pacific Eagle::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_EAGLE.mp3';
-
-    # AFN Tokyo/Yokota
-    push @STATIONS, 'AFN Tokyo::https://playerservices.streamtheworld.com/api/livestream-redirect/AFN_TOKYO.mp3';
+    # AFN GO Bahrain (Bahrain) - 32 kbps AAC+, 306 votes
+    push @STATIONS, 'AFN GO Bahrain::https://playerservices.streamtheworld.com/api/livestream-redirect/AFNE_BHNAAC.aac';
 
     my $count = scalar @STATIONS;
     print "${GREEN}Loaded $count AFN radio stations.${RESET}\n";
