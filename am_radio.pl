@@ -145,7 +145,7 @@ ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
   ${CYAN}1${RESET}-${CYAN}9${RESET}          Jump to preset (first 9 stations)
   ${CYAN}o${RESET}            Toggle Lo-Fi AM filter
-  ${CYAN}i${RESET}            Dump verbose stream info to /tmp (ICY tags, codec, etc.)
+  ${CYAN}i${RESET}            Show verbose stream info (press any key to return)
   ${CYAN}r${RESET}            Re-tune (kick mpv if a stream stalls)
   ${CYAN}q${RESET} / ${CYAN}Esc${RESET}      Quit
 END
@@ -942,40 +942,35 @@ sub tui_retune {
 }
 
 # ------------------------------------------------------------------------------
-# tui_dump_stream_info - Dump verbose stream information to a file while in
-# TUI mode. This creates a detailed log file with all available metadata about
-# the current stream including ICY tags, bitrate, codec, and track info.
-# The file is written to /tmp and the path is shown in a status message.
+# tui_dump_stream_info - Display verbose stream information as an overlay in
+# TUI mode. This shows detailed metadata about the current stream including
+# ICY tags, bitrate, codec, and track info. The display pauses playback UI
+# and waits for any keypress to dismiss and return to normal TUI.
 # ------------------------------------------------------------------------------
 sub tui_dump_stream_info {
     my ($st) = @_;
 
     my ($name, $url) = split /::/, $st->{stations}[$st->{current}], 2;
-    my $timestamp = time();
-    my $output_file = "/tmp/am_radio_stream_info_$timestamp.txt";
 
-    # Temporarily save terminal state and restore normal mode for ffprobe
-    open(my $fh, '>', $output_file) or do {
-        $st->{msg} = "Error: Could not create info file";
-        $st->{msg_until} = time() + 3;
-        return;
-    };
+    # Clear screen and move to top
+    print "\e[2J\e[H";
 
-    # Write header
-    print $fh "=" x 70 . "\n";
-    print $fh "Stream Information Dump\n";
-    print $fh "Generated: " . localtime($timestamp) . "\n";
-    print $fh "=" x 70 . "\n\n";
+    # Header
+    print "${BOLD}${CYAN}";
+    print "=" x 70 . "\n";
+    print "Stream Information\n";
+    print "=" x 70 . "\n";
+    print "${RESET}\n";
 
     # Station info
-    print $fh "Station Name: $name\n";
-    print $fh "Stream URL:   $url\n";
-    print $fh "Current Track: " . ($st->{track} || '(no track info)') . "\n";
-    print $fh "\n";
+    print "${BOLD}Station Name:${RESET} $name\n";
+    print "${BOLD}Stream URL:${RESET}   $url\n";
+    print "${BOLD}Current Track:${RESET} " . ($st->{track} || '(no track info)') . "\n";
+    print "\n";
 
     # Get detailed metadata from mpv via IPC if available
     if ($st->{mpv_pid} && -S $st->{sock}) {
-        print $fh "--- ICY/Metadata Tags (from mpv) ---\n";
+        print "${CYAN}--- ICY/Metadata Tags (from mpv) ---${RESET}\n";
 
         my $req_id = $st->{req_id}++;
         my @props = (
@@ -987,19 +982,24 @@ sub tui_dump_stream_info {
             ['metadata/icy-url',         'Homepage URL'],
         );
 
+        my $has_metadata = 0;
         for my $prop (@props) {
             my ($key, $label) = @$prop;
             my $value = ipc_get_property($st->{sock}, $key, $req_id++, 0.3);
             if (defined $value && length $value) {
-                printf $fh "  %-20s %s\n", "$label:", $value;
+                printf "  ${DIM}%-20s${RESET} %s\n", "$label:", $value;
+                $has_metadata = 1;
             }
         }
-        print $fh "\n";
+        if (!$has_metadata) {
+            print "  ${DIM}(No ICY metadata available)${RESET}\n";
+        }
+        print "\n";
     }
 
     # Get detailed format info from ffprobe if available
     if (system("command -v ffprobe > /dev/null 2>&1") == 0) {
-        print $fh "--- Deep Stream Analysis (ffprobe) ---\n";
+        print "${CYAN}--- Deep Stream Analysis (ffprobe) ---${RESET}\n";
 
         my $probe = run_capture(
             'ffprobe',
@@ -1011,24 +1011,37 @@ sub tui_dump_stream_info {
         );
 
         if (defined $probe && length $probe) {
-            print $fh $probe;
+            # Parse and display in a more readable format
+            for my $line (split /\n/, $probe) {
+                if ($line =~ /^\[(\w+)\]/) {
+                    print "${GREEN}[$1]${RESET}\n";
+                } elsif ($line =~ /^TAG:(.+)=(.+)$/) {
+                    printf "  ${DIM}%-20s${RESET} %s\n", "$1:", $2;
+                } elsif ($line =~ /^(\w+)=(.+)$/) {
+                    printf "  ${DIM}%-20s${RESET} %s\n", "$1:", $2;
+                }
+            }
         } else {
-            print $fh "  (No additional metadata available)\n";
+            print "  ${DIM}(No additional metadata available)${RESET}\n";
         }
-        print $fh "\n";
+        print "\n";
     }
 
-    print $fh "=" x 70 . "\n";
-    print $fh "End of stream information\n";
-    print $fh "=" x 70 . "\n";
+    # Footer
+    print "${BOLD}${CYAN}";
+    print "=" x 70 . "\n";
+    print "${RESET}";
+    print "${YELLOW}Press any key to return to radio...${RESET}\n";
 
-    close $fh;
+    # Wait for any keypress (blocking read)
+    my $saved_term = tui_term_setup();  # Ensure raw mode
+    tui_read_key(undef);  # Blocking read (no timeout)
+    tui_term_restore($saved_term);
 
-    # Update status message
-    $st->{msg} = "Stream info saved to: $output_file";
-    $st->{msg_until} = time() + 5;
+    # Clear screen and return - the main loop will redraw the TUI
+    print "\e[2J\e[H";
 
-    verbose_log("TUI: Stream info dumped to $output_file");
+    verbose_log("TUI: Stream info displayed and dismissed");
 }
 
 # ------------------------------------------------------------------------------
