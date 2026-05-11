@@ -145,6 +145,7 @@ ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
   ${CYAN}1${RESET}-${CYAN}9${RESET}          Jump to preset (first 9 stations)
   ${CYAN}o${RESET}            Toggle Lo-Fi AM filter
+  ${CYAN}i${RESET}            Dump verbose stream info to /tmp (ICY tags, codec, etc.)
   ${CYAN}r${RESET}            Re-tune (kick mpv if a stream stalls)
   ${CYAN}q${RESET} / ${CYAN}Esc${RESET}      Quit
 END
@@ -941,6 +942,96 @@ sub tui_retune {
 }
 
 # ------------------------------------------------------------------------------
+# tui_dump_stream_info - Dump verbose stream information to a file while in
+# TUI mode. This creates a detailed log file with all available metadata about
+# the current stream including ICY tags, bitrate, codec, and track info.
+# The file is written to /tmp and the path is shown in a status message.
+# ------------------------------------------------------------------------------
+sub tui_dump_stream_info {
+    my ($st) = @_;
+
+    my ($name, $url) = split /::/, $st->{stations}[$st->{current}], 2;
+    my $timestamp = time();
+    my $output_file = "/tmp/am_radio_stream_info_$timestamp.txt";
+
+    # Temporarily save terminal state and restore normal mode for ffprobe
+    open(my $fh, '>', $output_file) or do {
+        $st->{msg} = "Error: Could not create info file";
+        $st->{msg_until} = time() + 3;
+        return;
+    };
+
+    # Write header
+    print $fh "=" x 70 . "\n";
+    print $fh "Stream Information Dump\n";
+    print $fh "Generated: " . localtime($timestamp) . "\n";
+    print $fh "=" x 70 . "\n\n";
+
+    # Station info
+    print $fh "Station Name: $name\n";
+    print $fh "Stream URL:   $url\n";
+    print $fh "Current Track: " . ($st->{track} || '(no track info)') . "\n";
+    print $fh "\n";
+
+    # Get detailed metadata from mpv via IPC if available
+    if ($st->{mpv_pid} && -S $st->{sock}) {
+        print $fh "--- ICY/Metadata Tags (from mpv) ---\n";
+
+        my $req_id = $st->{req_id}++;
+        my @props = (
+            ['metadata/icy-name',        'Station Name'],
+            ['metadata/icy-title',       'Track Title'],
+            ['metadata/icy-genre',       'Genre'],
+            ['metadata/icy-br',          'Bitrate (kbps)'],
+            ['metadata/icy-description', 'Description'],
+            ['metadata/icy-url',         'Homepage URL'],
+        );
+
+        for my $prop (@props) {
+            my ($key, $label) = @$prop;
+            my $value = ipc_get_property($st->{sock}, $key, $req_id++, 0.3);
+            if (defined $value && length $value) {
+                printf $fh "  %-20s %s\n", "$label:", $value;
+            }
+        }
+        print $fh "\n";
+    }
+
+    # Get detailed format info from ffprobe if available
+    if (system("command -v ffprobe > /dev/null 2>&1") == 0) {
+        print $fh "--- Deep Stream Analysis (ffprobe) ---\n";
+
+        my $probe = run_capture(
+            'ffprobe',
+            '-v', 'quiet',
+            '-timeout', '5000000',
+            '-show_entries', 'format:format_tags:stream',
+            '-of', 'default=noprint_wrappers=1',
+            $url,
+        );
+
+        if (defined $probe && length $probe) {
+            print $fh $probe;
+        } else {
+            print $fh "  (No additional metadata available)\n";
+        }
+        print $fh "\n";
+    }
+
+    print $fh "=" x 70 . "\n";
+    print $fh "End of stream information\n";
+    print $fh "=" x 70 . "\n";
+
+    close $fh;
+
+    # Update status message
+    $st->{msg} = "Stream info saved to: $output_file";
+    $st->{msg_until} = time() + 5;
+
+    verbose_log("TUI: Stream info dumped to $output_file");
+}
+
+# ------------------------------------------------------------------------------
 # tui_fake_freq - turn a station index into a fake AM-band frequency for the
 # display. Real AM band: 540 kHz to 1700 kHz. Just visual flavour.
 # ------------------------------------------------------------------------------
@@ -1249,10 +1340,10 @@ sub tui_msg_row {
 
 # Footer / help line
 sub tui_help_row {
-    my $body = '  ◀ ▶ tune    1-9 preset    o filter    r retune    q quit  ';
+    my $body = '  ◀ ▶ tune   1-9   o filter   i info   r retune   q quit  ';
     $body = pad_to($body, $TUI_INNER);
     my $coloured = $body;
-    $coloured =~ s/(◀ ▶|1-9|o|r|q)/${CYAN}$1$RESET/g;
+    $coloured =~ s/(◀ ▶|1-9|o|i|r|q)/${CYAN}$1$RESET/g;
     return $coloured;
 }
 
@@ -1380,6 +1471,7 @@ sub radio_tui {
             elsif ($key =~ /^[1-9]$/)                            { tui_jump(\%st, $key - 1) }
             elsif ($key eq 'o' || $key eq 'O')                   { tui_toggle_filter(\%st) }
             elsif ($key eq 'r' || $key eq 'R')                   { tui_retune(\%st) }
+            elsif ($key eq 'i' || $key eq 'I')                   { tui_dump_stream_info(\%st) }
         }
 
         my $now = time();
