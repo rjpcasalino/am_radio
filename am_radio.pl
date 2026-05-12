@@ -1585,7 +1585,7 @@ sub tui_do_search {
 
     my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
                 . '?name=' . uri_escape($query)
-                . '&limit=9&hidebroken=true';
+                . '&limit=9&hidebroken=true&order=votes&reverse=true';
 
     # run_capture uses list-form exec so the query string can never be
     # misinterpreted as shell code even if it contains metacharacters.
