@@ -11,8 +11,8 @@
 #   * Discovers new stations via the public Radio-Browser.info API
 #   * Optionally applies a lo-fi "old time AM radio" audio filter
 #   * Optionally dumps stream metadata (ICY/ID3 tags) using 'ffprobe'
-#   * Optionally drives a vintage-tube-radio TUI (-t) with frequency dial,
-#     pulsing ON AIR lamp, animated signal meter and live track display
+#   * Optionally drives a vintage-tube-radio TUI (-t) with AM_RADIO branding,
+#     frequency dial, presets, live track display and in-TUI station search
 #
 # External programs required at runtime:
 #   * mpv      - to actually play the audio (mandatory)
@@ -121,7 +121,7 @@ ${BOLD}Options:${RESET}
                language, tag/genre, or advanced multi-criteria search
   -o         Enable 'Old Time Radio' audio filter (lo-fi AM sound)
   -i         Dump initial station metadata (ffprobe required)
-  -t         Tuner mode: vintage TUI with dial, signal meter and ON AIR lamp
+  -t         Tuner mode: vintage TUI with dial and presets
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
 
@@ -147,6 +147,7 @@ ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}o${RESET}            Toggle Lo-Fi AM filter
   ${CYAN}i${RESET}            Show verbose stream info (press any key to return)
   ${CYAN}r${RESET}            Re-tune (kick mpv if a stream stalls)
+  ${CYAN}f${RESET}            Search for stations (music keeps playing)
   ${CYAN}q${RESET} / ${CYAN}Esc${RESET}      Quit
 END
     exit 0;
@@ -687,7 +688,7 @@ sub poll_track_loop {
 # Layout (66 cols x 22 rows, Unicode box drawing):
 #
 #   ╔════════════════════════════════════════════════════════════════╗
-#   ║ ● ON AIR             RADIO TERMINAL              [Lo-Fi:OFF ]  ║
+#   ║                          AM_RADIO                 [Lo-Fi:OFF] ║
 #   ╠════════════════════════════════════════════════════════════════╣
 #   ║                                                                ║
 #   ║   ┌──────────────────────────────────────────────────────────┐ ║
@@ -701,12 +702,16 @@ sub poll_track_loop {
 #   ║   ╎    ╎    ╎    │    ╎    ╎    ╎    ╎    ╎    ╎    ╎    ╎    ║
 #   ║   540   700  900  1080  1260 1440  1620 1700               kHz ║
 #   ║                                                                ║
-#   ║   SIGNAL ▰▰▰▰▰▰▰▱▱▱      PRESETS  1 2 3 4 5 6 7 8 9            ║
+#   ║                         PRESETS  1 2 3 4 5 6 7 8 9            ║
 #   ║                                                                ║
 #   ║   > Tuning…                                                    ║
 #   ╠════════════════════════════════════════════════════════════════╣
-#   ║   ◀ ▶ tune    1-9 preset    o filter    r retune    q quit    ║
+#   ║  ◀ ▶ tune   1-9 preset   o lo-fi   r retune   f find   q quit ║
 #   ╚════════════════════════════════════════════════════════════════╝
+#
+# In search mode (press f), the content area (rows 3-17) is replaced with a
+# search prompt card and up to 5 Radio-Browser.info results. Music is
+# uninterrupted because mpv runs as a separate child process.
 #
 # The TUI process layout:
 #
@@ -1092,37 +1097,26 @@ sub centered {
     return (' ' x $left) . $s . (' ' x $right);
 }
 
-# Build the title bar (row 2): " ● ON AIR ............. RADIO TERMINAL ............. [Lo-Fi:XXX] "
+# Build the title bar (row 1): "  <centered AM_RADIO>  [Lo-Fi:XXX] "
+# The brand is centered in the available space; the Lo-Fi badge sits flush right.
 sub tui_title_row {
     my ($st) = @_;
 
-    my $dot      = $st->{pulse} ? '●' : '○';
-    my $on_air   = "$dot ON AIR";                 # 8 visible chars
-    my $brand    = 'RADIO TERMINAL';              # 14 visible chars
-    my $filter   = $st->{filter} ? '[Lo-Fi:ON ]'  # 11 visible chars (note trailing space)
-                                 : '[Lo-Fi:OFF]';
+    my $brand  = 'AM_RADIO';     # 8 visible chars
+    my $filter = $st->{filter} ? '[Lo-Fi:ON ]'   # 11 visible chars (trailing space keeps width)
+                               : '[Lo-Fi:OFF]';
 
-    # Inner width 64. Used: 1 (lead) + 8 + 14 + 11 + 1 (trail) = 35. Pad = 29. Split 14/15.
-    my $body =
-          ' ' . $on_air
-        . (' ' x 14)
-        . $brand
-        . (' ' x 15)
-        . $filter . ' ';
+    # Inner width = 64. Right segment: 11 (filter) + 1 (trailing space) = 12.
+    # Left segment: 1 (leading space). Brand field: 64 - 1 - 12 = 51 chars.
+    # centered() pads $brand symmetrically inside the 51-char field.
+    my $body = ' ' . centered($brand, 51) . $filter . ' ';
 
     # Sanity check: keeps us honest if someone tweaks a constant.
     die "title row width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
 
-    # Now colorize specific substrings. Order matters - replace longer/more
-    # specific things first so we don't double-substitute.
+    # Colorize: bold yellow branding, dim/magenta filter badge.
     my $coloured = $body;
-    if ($st->{pulse}) {
-        $coloured =~ s/●/$RED$BOLD●$RESET/;
-    } else {
-        $coloured =~ s/○/${RED}${DIM}○$RESET/;
-    }
-    $coloured =~ s/ON AIR/${RED}${BOLD}ON AIR$RESET/;
-    $coloured =~ s/RADIO TERMINAL/$BOLD${YELLOW}RADIO TERMINAL$RESET/;
+    $coloured =~ s/AM_RADIO/${BOLD}${YELLOW}AM_RADIO$RESET/;
     if ($st->{filter}) {
         $coloured =~ s/\Q[Lo-Fi:ON ]/$MAGENTA${BOLD}[Lo-Fi:ON ]$RESET/;
     } else {
@@ -1299,17 +1293,12 @@ sub tui_dial_label_row {
     return $coloured;
 }
 
-# Signal meter: 10 cells, filled according to $st->{signal} (0..10).
-# Block characters used: ▰ (filled), ▱ (empty).
+# Preset buttons: 1..min(9, n_stations), current station highlighted in brackets.
+# The signal meter has been removed; only presets are shown, centered.
 sub tui_status_row {
     my ($st) = @_;
 
-    my $sig = $st->{signal};
-    $sig = 0  if $sig < 0;
-    $sig = 10 if $sig > 10;
-    my $bar = ('▰' x $sig) . ('▱' x (10 - $sig));
-
-    # Presets: 1..min(9, n_stations). Highlight the current one.
+    # Build the preset button strip. The active station shows as [N], others as " N ".
     my $n = scalar @{ $st->{stations} };
     my $max_preset = $n > 9 ? 9 : $n;
     my @cells;
@@ -1318,21 +1307,12 @@ sub tui_status_row {
     }
     my $presets = join('', @cells);
 
-    # Compose. Inner width 64. We'll pad at the end.
-    my $left  = "   SIGNAL $bar";                # "   " + "SIGNAL " + 10 cells = 3+7+10 = 20
-    my $right = "PRESETS $presets";              # "PRESETS " + cells
-    my $gap   = $TUI_INNER - length($left) - length($right);
-    $gap = 1 if $gap < 1;
-    my $body = $left . (' ' x $gap) . $right;
-    $body = pad_to($body, $TUI_INNER);
+    # Center the entire "PRESETS N N …" block inside the 64-char inner width.
+    my $body = pad_to(centered("PRESETS  $presets", $TUI_INNER), $TUI_INNER);
 
     my $coloured = $body;
-    # Color the filled cells green-ish, empty cells dim
-    $coloured =~ s/(▰+)/$GREEN$1$RESET/g;
-    $coloured =~ s/(▱+)/$DIM$1$RESET/g;
-    $coloured =~ s/SIGNAL/${BOLD}SIGNAL$RESET/;
     $coloured =~ s/PRESETS/${BOLD}PRESETS$RESET/;
-    # Highlight the [N] active preset
+    # Highlight the active preset with yellow bold brackets
     $coloured =~ s/\[(\d)\]/${YELLOW}${BOLD}[$1]$RESET/g;
     return $coloured;
 }
@@ -1351,12 +1331,12 @@ sub tui_msg_row {
     return $coloured;
 }
 
-# Footer / help line
+# Footer / help line — one-line summary of all key bindings
 sub tui_help_row {
-    my $body = '  ◀ ▶ tune   1-9   o filter   i info   r retune   q quit  ';
+    my $body = '  ◀ ▶ tune   1-9 preset   o lo-fi   i info   r retune   f find   q quit  ';
     $body = pad_to($body, $TUI_INNER);
     my $coloured = $body;
-    $coloured =~ s/(◀ ▶|1-9|o|i|r|q)/${CYAN}$1$RESET/g;
+    $coloured =~ s/(◀ ▶|1-9|o|i|r|f|q)/${CYAN}$1$RESET/g;
     return $coloured;
 }
 
@@ -1366,49 +1346,317 @@ sub tui_blank_row {
 }
 
 # ------------------------------------------------------------------------------
-# tui_draw - assemble all the rows and dump them to the screen in one go.
-# We move the cursor to the top-left, then for each row print the row body
-# wrapped in left/right border chars and an explicit ESC[K to clear any
-# leftover characters past our right border (handles terminal resizes
-# or stale output gracefully).
+# tui_search_help_row - key-binding bar shown at the bottom while in search mode.
+# Replaces the normal tui_help_row when $st->{search_mode} is active.
+# ------------------------------------------------------------------------------
+sub tui_search_help_row {
+    my ($mode) = @_;
+    my $body = $mode == 1
+        ? '  Enter=search    1-9 tune & save    Esc=cancel'
+        : '  1-9 tune & save    Esc=cancel';
+    $body = pad_to($body, $TUI_INNER);
+    my $coloured = $body;
+    $coloured =~ s/(Enter|1-9|Esc)/${CYAN}$1$RESET/g;
+    return $coloured;
+}
+
+# ------------------------------------------------------------------------------
+# tui_search_content_rows - returns the 15 inner content rows (rows 3-17) that
+# replace the normal station/dial layout while search mode is active.
+#
+# Row mapping:
+#   0 (row 3)  blank
+#   1 (row 4)  card top border
+#   2 (row 5)  search prompt card row  ("Search: [query]_")
+#   3 (row 6)  card bottom border
+#   4 (row 7)  blank
+#   5 (row 8)  status/instruction line
+#   6-10       up to 5 search result rows  (blank if slot is empty)
+#   11(row 14) blank
+#   12(row 15) preset buttons (unchanged — music keeps playing)
+#   13(row 16) blank
+#   14(row 17) transient message row
+# ------------------------------------------------------------------------------
+sub tui_search_content_rows {
+    my ($st) = @_;
+
+    my $mode    = $st->{search_mode};
+    my $query   = $st->{search_query} // '';
+    my @results = @{ $st->{search_results} // [] };
+
+    # ---- Search prompt card row ------------------------------------------
+    # The card is 60 chars wide (3-space margin + │ + 58 content + │ + space).
+    my $inner_card  = 58;
+    my $label       = 'Search: ';                          # 8 visible chars
+    my $max_q_w     = $inner_card - length($label) - 1;   # reserve 1 for cursor '_'
+    my $q_display   = truncate_to($query, $max_q_w);
+    my $cursor      = $mode == 1 ? '_' : ' ';             # blinking cursor in typing state
+    my $prompt_inner = pad_to($label . $q_display . $cursor, $inner_card);
+
+    # Colorize the prompt: cyan label, bold cursor
+    my $prompt_colored = $prompt_inner;
+    $prompt_colored =~ s/Search:/${CYAN}Search:$RESET/;
+    $prompt_colored =~ s/_$/${BOLD}_$RESET/ if $mode == 1;
+
+    # Wrap the prompt in card borders (same style as tui_card_top/bot)
+    my $card_row = '   ' . "${CYAN}│$RESET" . $prompt_colored . "${CYAN}│$RESET" . ' ';
+
+    # ---- Status / instruction line ----------------------------------------
+    my $status_text;
+    if ($mode == 1) {
+        $status_text = length($query)
+            ? "   Press Enter to search for \"$query\""
+            : '   Type a station name and press Enter to search';
+    } else {
+        my $n = scalar @results;
+        $status_text = $n
+            ? sprintf('   Found %d station(s) — press 1-%d to tune in and save',
+                      $n, $n > 9 ? 9 : $n)
+            : '   No stations found. Try a different query.';
+    }
+    my $status = pad_to($status_text, $TUI_INNER);
+    # Highlight the key-range hint if present
+    (my $status_colored = $status) =~ s/(\d+-\d+)/${CYAN}$1$RESET/;
+
+    # ---- Result rows (5 slots) -------------------------------------------
+    # Each result row: "   N) <name padded to fill>  NNN kbps"
+    my @result_rows;
+    for my $i (0 .. 4) {
+        my $r = $results[$i];
+        if (defined $r) {
+            my $num_str = sprintf '%d) ', $i + 1;          # "N) " = 3 chars
+            my $bitrate = $r->{bitrate}
+                ? sprintf('%3d kbps', $r->{bitrate})       # "NNN kbps" = 8 chars
+                : '        ';                               # 8 spaces when unknown
+            my $prefix  = '   ' . $num_str;                # "   N) " = 6 chars
+            my $suffix  = '  ' . $bitrate;                 # "  NNN kbps" = 10 chars
+            my $name_w  = $TUI_INNER - length($prefix) - length($suffix);
+            my $name_t  = truncate_to($r->{name} // '', $name_w);
+            my $body    = $prefix . pad_to($name_t, $name_w) . $suffix;
+            $body       = pad_to($body, $TUI_INNER);
+
+            my $colored = $body;
+            $colored =~ s/^(\s+\d+\) )/${CYAN}$1$RESET/;  # cyan result number
+            $colored =~ s/(\d+ kbps)/$YELLOW$1$RESET/;    # yellow bitrate
+            push @result_rows, $colored;
+        } else {
+            push @result_rows, tui_blank_row();            # empty slot
+        }
+    }
+
+    # ---- Assemble and return 15 content rows (rows 3-17) -----------------
+    return (
+        tui_blank_row(),       # row 3:  blank padding before the card
+        tui_card_top(),        # row 4:  ┌──────────────────────────────────┐
+        $card_row,             # row 5:  │ Search: [query]_                 │
+        tui_card_bot(),        # row 6:  └──────────────────────────────────┘
+        tui_blank_row(),       # row 7:  blank
+        $status_colored,       # row 8:  instructions / result count
+        @result_rows,          # rows 9-13: up to 5 search results (or blanks)
+        tui_blank_row(),       # row 14: blank
+        tui_status_row($st),   # row 15: preset buttons (unchanged during search)
+        tui_blank_row(),       # row 16: blank
+        tui_msg_row($st),      # row 17: transient messages ("Searching…" etc.)
+    );
+}
+
+
+# ------------------------------------------------------------------------------
+# tui_draw - assemble all rows and flush them to the screen in one pass.
+#
+# Every content row is exactly $TUI_INNER (64) visible characters wide; the
+# outer border glyphs (║, ╔, ╚ …) are added here as the array is built.
+# The cursor is moved to the top-left corner (ESC[H) before printing so the
+# entire panel is redrawn in-place rather than scrolling.  ESC[K at the end
+# of each line clears any leftover characters from a wider previous frame.
 # ------------------------------------------------------------------------------
 sub tui_draw {
     my ($st) = @_;
 
-    # Top border + title bar + divider
+    # Assemble all 21 rows (indices 0-20) into an array.  In search mode the
+    # content rows (3-17) and the help row (19) are swapped out below.
     my @rows = (
+        # Row 0: Top outer border spanning the full TUI_WIDTH (66 columns)
         "${CYAN}╔" . ('═' x $TUI_INNER) . "╗${RESET}",
-        "${CYAN}║${RESET}" . tui_title_row($st)    . "${CYAN}║${RESET}",
+
+        # Row 1: Title bar — AM_RADIO branding centred, Lo-Fi badge on the right
+        "${CYAN}║${RESET}" . tui_title_row($st)        . "${CYAN}║${RESET}",
+
+        # Row 2: Horizontal divider between the title and the content area
         "${CYAN}╠" . ('═' x $TUI_INNER) . "╣${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_card_top()        . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_info_row1($st)    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_info_row2($st)    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_card_bot()        . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
+
+        # Row 3: Blank padding row at the top of the content area
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 4: Top edge of the station-info card (┌───┐)
+        "${CYAN}║${RESET}" . tui_card_top()             . "${CYAN}║${RESET}",
+
+        # Row 5: Station name and its fake AM frequency inside the card
+        "${CYAN}║${RESET}" . tui_info_row1($st)         . "${CYAN}║${RESET}",
+
+        # Row 6: Current track title (or "tuning in…" placeholder) inside the card
+        "${CYAN}║${RESET}" . tui_info_row2($st)         . "${CYAN}║${RESET}",
+
+        # Row 7: Bottom edge of the station-info card (└───┘)
+        "${CYAN}║${RESET}" . tui_card_bot()             . "${CYAN}║${RESET}",
+
+        # Row 8: Blank row separating the card from the frequency dial section
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 9: "FREQUENCY" section label
         "${CYAN}║${RESET}" . pad_to('   FREQUENCY', $TUI_INNER) . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_needle_row($st) . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_line_row()    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_tick_row($st) . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_label_row()   . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_status_row($st)    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_msg_row($st)       . "${CYAN}║${RESET}",
+
+        # Row 10: Dial needle (▼) positioned proportionally for the current station
+        "${CYAN}║${RESET}" . tui_dial_needle_row($st)   . "${CYAN}║${RESET}",
+
+        # Row 11: Horizontal dial track (━━━━━━━━━━━━)
+        "${CYAN}║${RESET}" . tui_dial_line_row()        . "${CYAN}║${RESET}",
+
+        # Row 12: Tick marks — dim for unselected stations, bold for current
+        "${CYAN}║${RESET}" . tui_dial_tick_row($st)     . "${CYAN}║${RESET}",
+
+        # Row 13: Frequency labels (540 – 1700 kHz) with "kHz" unit on the right
+        "${CYAN}║${RESET}" . tui_dial_label_row()       . "${CYAN}║${RESET}",
+
+        # Row 14: Blank row between the dial and the preset buttons
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 15: Preset buttons 1-9; the active station is highlighted as [N]
+        "${CYAN}║${RESET}" . tui_status_row($st)        . "${CYAN}║${RESET}",
+
+        # Row 16: Blank row between presets and the transient message line
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 17: Transient message row ("Tuning…", "Lo-Fi ON", etc.)
+        "${CYAN}║${RESET}" . tui_msg_row($st)           . "${CYAN}║${RESET}",
+
+        # Row 18: Horizontal divider between the content area and the help row
         "${CYAN}╠" . ('═' x $TUI_INNER) . "╣${RESET}",
-        "${CYAN}║${RESET}" . tui_help_row()        . "${CYAN}║${RESET}",
+
+        # Row 19: Key-binding summary — one line listing all available commands
+        "${CYAN}║${RESET}" . tui_help_row()             . "${CYAN}║${RESET}",
+
+        # Row 20: Bottom outer border
         "${CYAN}╚" . ('═' x $TUI_INNER) . "╝${RESET}",
     );
 
-    # Move cursor to home and print each row, clearing to end of line on the way
+    # In search mode, overlay the content area (rows 3-17) with the search UI
+    # and replace the help row (19) with search-specific key bindings.
+    # The outer borders (0-2, 18, 20) and the title (1) are unchanged.
+    if ($st->{search_mode}) {
+        my @content = tui_search_content_rows($st);
+        for my $i (0 .. $#content) {
+            $rows[3 + $i] = "${CYAN}║${RESET}" . $content[$i] . "${CYAN}║${RESET}";
+        }
+        $rows[19] = "${CYAN}║${RESET}" . tui_search_help_row($st->{search_mode})
+                  . "${CYAN}║${RESET}";
+    }
+
+    # Move the cursor to the top-left corner (home position) and redraw every
+    # row in sequence.  ESC[K erases to end of line so any characters from a
+    # wider previous frame or a terminal resize artefact are cleaned up.
     print "\e[H";
     for my $row (@rows) {
         print $row, "\e[K\n";
     }
-    # Flush the remainder of the screen below us. \e[J clears from cursor to
-    # bottom; useful when we shrink or the previous frame had stuff below.
+    # ESC[J clears from the cursor to the bottom of the screen.  This removes
+    # any content that was below our TUI (e.g. from a previous taller layout
+    # or text that was on screen before we entered alternate-screen mode).
     print "\e[J";
 }
+
+# ------------------------------------------------------------------------------
+# tui_do_search - call the Radio-Browser.info API and populate search results.
+#
+# This is a blocking network call (curl).  The music keeps playing because mpv
+# runs as a separate child process and is not affected by the parent blocking.
+# We redraw the TUI with a "Searching…" message before the call so the user
+# gets feedback immediately rather than staring at a frozen screen.
+# ------------------------------------------------------------------------------
+sub tui_do_search {
+    my ($st) = @_;
+    my $query = $st->{search_query} // '';
+    return unless length $query;
+
+    # Show a "Searching…" message and flush to the terminal before we block.
+    $st->{msg}       = 'Searching…';
+    $st->{msg_until} = time() + 30;
+    tui_draw($st);
+
+    my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                . '?name=' . uri_escape($query)
+                . '&limit=9&hidebroken=true';
+
+    # run_capture uses list-form exec so the query string can never be
+    # misinterpreted as shell code even if it contains metacharacters.
+    my $response = run_capture('curl', '-sL', '--max-time', '8', $api_url);
+    my $data     = eval { decode_json($response // '') };
+
+    if ($@ || ref($data) ne 'ARRAY') {
+        $st->{search_results} = [];
+        $st->{msg}            = 'Search failed — check network connection';
+        $st->{msg_until}      = time() + 3;
+    } else {
+        # Normalise into a plain list of {name, url, bitrate} hashes.
+        $st->{search_results} = [
+            map { {
+                name    => $_->{name}    // '',
+                url     => $_->{url}     // '',
+                bitrate => $_->{bitrate} // 0,
+            } }
+            @$data
+        ];
+        my $n = scalar @{ $st->{search_results} };
+        $st->{msg}       = $n ? "Found $n match(es)" : 'No stations found';
+        $st->{msg_until} = time() + 2;
+    }
+
+    # Advance to results-display state so the user can pick a station.
+    $st->{search_mode} = 2;
+}
+
+# ------------------------------------------------------------------------------
+# tui_search_select - save a search result to ~/.radio_stations and tune mpv
+# to it without stopping playback of the current stream first.
+# ------------------------------------------------------------------------------
+sub tui_search_select {
+    my ($st, $n) = @_;   # $n is 1-based choice from the result list
+    my @results = @{ $st->{search_results} // [] };
+    my $idx = $n - 1;
+    return if $idx < 0 || $idx >= @results;
+
+    my $r    = $results[$idx];
+    my $name = $r->{name} // '';
+    my $url  = $r->{url}  // '';
+    return unless length $name && length $url;
+
+    # Strip any embedded newlines that a malformed API response might carry;
+    # the config file format uses one "Name::URL" entry per line.
+    $name =~ s/[\r\n]+/ /g;
+    $url  =~ s/[\r\n]+//g;
+
+    # Persist the chosen station so it appears in future sessions.
+    if (open(my $fh, '>>', $CONFIG_FILE)) {
+        print $fh $name . '::' . $url . "\n";
+        close $fh;
+    }
+
+    # Hot-add the station to the in-memory list and switch mpv to it.
+    push @STATIONS, $name . '::' . $url;
+    $st->{stations} = \@STATIONS;
+    $st->{current}  = $#STATIONS;
+    tui_stop_mpv($st);
+    tui_start_mpv($st);
+    $st->{msg}       = 'Tuning to ' . truncate_to($name, 30);
+    $st->{msg_until} = time() + 2;
+
+    # Clear search state and return to normal playback view.
+    $st->{search_mode}    = 0;
+    $st->{search_query}   = '';
+    $st->{search_results} = [];
+}
+
+
 
 # ------------------------------------------------------------------------------
 # radio_tui - main TUI driver.
@@ -1421,7 +1669,8 @@ sub radio_tui {
         return;
     }
 
-    # Make sure the terminal is big enough for our drawing.
+    # Record the initial terminal size.  The startup check is strict (exit if
+    # too small); subsequent resize handling is done in the event loop.
     my ($rows, $cols) = tui_term_size();
     if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
         print STDERR "${YELLOW}Terminal is ${cols}x${rows}; need at least ${TUI_WIDTH}x${TUI_HEIGHT}.${RESET}\n";
@@ -1429,26 +1678,27 @@ sub radio_tui {
     }
 
     my %st = (
-        stations   => \@STATIONS,
-        current    => ($initial_idx // 0),
-        track      => '',
-        filter     => $initial_filter ? 1 : 0,
-        signal     => 8,
-        pulse      => 0,
-        mpv_pid    => undef,
-        sock       => "/tmp/am_radio_tui_$$.sock",
-        last_poll  => 0,
-        last_anim  => 0,
-        msg        => '',
-        msg_until  => 0,
-        tune_start => 0,
-        req_id     => 1,
+        stations      => \@STATIONS,
+        current       => ($initial_idx // 0),
+        track         => '',
+        filter        => $initial_filter ? 1 : 0,
+        mpv_pid       => undef,
+        sock          => "/tmp/am_radio_tui_$$.sock",
+        last_poll     => 0,
+        msg           => '',
+        msg_until     => 0,
+        tune_start    => 0,
+        req_id        => 1,
+        # Search mode state (see tui_do_search / tui_search_select)
+        search_mode    => 0,   # 0=off  1=typing query  2=showing results
+        search_query   => '',
+        search_results => [],
     );
 
     my $saved_term = tui_term_setup();
 
-    # Enter alternate screen buffer (saves the user's existing terminal
-    # contents) and hide the cursor for the duration of the TUI.
+    # Enter the alternate screen buffer so we don't clobber the user's
+    # scrollback, then hide the cursor for cleaner drawing.
     print "\e[?1049h\e[?25l\e[2J\e[H";
 
     # Cleanup is idempotent (a flag prevents double-cleanup) and used by
@@ -1464,33 +1714,89 @@ sub radio_tui {
     local $SIG{TERM} = sub { $cleanup->(); exit 143; };
     local $SIG{HUP}  = sub { $cleanup->(); exit 129; };
 
+    # SIGWINCH fires whenever the terminal window is resized.  We set a flag
+    # here (signal-safe) and re-check terminal dimensions in the event loop.
+    my $need_resize = 0;
+    local $SIG{WINCH} = sub { $need_resize = 1; };
+
     tui_start_mpv(\%st);
     $st{msg}       = 'Tuning…';
     $st{msg_until} = time() + 1.5;
 
     # ---- main event loop --------------------------------------------------
-    # ~10 Hz redraw; key reads use a 50ms select timeout so the loop is
-    # snappy without being a busy-wait. Per-iteration tasks:
-    #   * read keystroke (non-blocking)
-    #   * if 1.5s since last poll, re-fetch the ICY title from mpv
-    #   * if 0.2s since last animation frame, jiggle the signal meter
-    #     and toggle the ON AIR pulse
-    #   * redraw the whole panel
+    # Runs at roughly 20 Hz (tui_read_key blocks for up to 50ms per pass).
+    # Each iteration:
+    #   1. Handle terminal resize if SIGWINCH was received.
+    #   2. Read a keystroke (non-blocking, 50ms timeout).
+    #   3. If 1.5s have elapsed, re-fetch the ICY track title from mpv.
+    #   4. Redraw the full panel.
     while (1) {
+
+        # ---- Terminal resize handling -------------------------------------
+        # On SIGWINCH, re-measure the terminal.  The stored $rows/$cols keep
+        # their previous values until a new SIGWINCH triggers a fresh read,
+        # so the too-small check below keeps firing (without extra stty calls)
+        # until the user grows the window and SIGWINCH fires again.
+        if ($need_resize) {
+            $need_resize = 0;
+            ($rows, $cols) = tui_term_size();
+        }
+        if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
+            print "\e[2J\e[H";
+            printf "${YELLOW}Terminal too small (%dx%d) — resize to at least %dx%d.${RESET}\n",
+                   $cols, $rows, $TUI_WIDTH, $TUI_HEIGHT;
+            print "Resize the terminal window to continue...\n";
+            sleep 0.3;
+            next;
+        }
+
+        # ---- Key handling ------------------------------------------------
         if (defined(my $key = tui_read_key(0.05))) {
-            if    ($key eq 'q' || $key eq 'Q' || $key eq 'esc')  { last }
-            elsif ($key eq 'right' || $key eq 'n' || $key eq 'N'){ tui_change(\%st, +1) }
-            elsif ($key eq 'left'  || $key eq 'p' || $key eq 'P'){ tui_change(\%st, -1) }
-            elsif ($key =~ /^[1-9]$/)                            { tui_jump(\%st, $key - 1) }
-            elsif ($key eq 'o' || $key eq 'O')                   { tui_toggle_filter(\%st) }
-            elsif ($key eq 'r' || $key eq 'R')                   { tui_retune(\%st) }
-            elsif ($key eq 'i' || $key eq 'I')                   { tui_dump_stream_info(\%st) }
+
+            if ($st{search_mode}) {
+                # -- Search mode --
+                if ($key eq 'esc') {
+                    # Cancel search and return to normal playback view
+                    $st{search_mode}    = 0;
+                    $st{search_query}   = '';
+                    $st{search_results} = [];
+                } elsif ($st{search_mode} == 2 && $key =~ /^[1-9]$/) {
+                    # Result selection: save station and switch mpv to it
+                    tui_search_select(\%st, int($key));
+                } elsif ($st{search_mode} == 1) {
+                    if ($key eq "\r") {
+                        # Enter: run the blocking API search
+                        tui_do_search(\%st);
+                    } elsif ($key eq "\x7f" || $key eq "\x08") {
+                        # Backspace / Delete: remove last character of query
+                        $st{search_query} =~ s/.$//s;
+                    } elsif (length($key) == 1 && $key =~ /[ -~]/) {
+                        # Printable ASCII: accumulate into the search string
+                        $st{search_query} .= $key;
+                    }
+                }
+            } else {
+                # -- Normal playback mode --
+                if    ($key eq 'q' || $key eq 'Q' || $key eq 'esc')   { last }
+                elsif ($key eq 'right' || $key eq 'n' || $key eq 'N') { tui_change(\%st, +1) }
+                elsif ($key eq 'left'  || $key eq 'p' || $key eq 'P') { tui_change(\%st, -1) }
+                elsif ($key =~ /^[1-9]$/)                             { tui_jump(\%st, $key - 1) }
+                elsif ($key eq 'o' || $key eq 'O')                    { tui_toggle_filter(\%st) }
+                elsif ($key eq 'r' || $key eq 'R')                    { tui_retune(\%st) }
+                elsif ($key eq 'i' || $key eq 'I')                    { tui_dump_stream_info(\%st) }
+                elsif ($key eq 'f' || $key eq '/')                    {
+                    # Enter search mode — music is uninterrupted
+                    $st{search_mode}    = 1;
+                    $st{search_query}   = '';
+                    $st{search_results} = [];
+                }
+            }
         }
 
         my $now = time();
 
         # Reap mpv if it died on its own (network drop, decoder crash, etc.)
-        # so we don't keep showing stale state.
+        # so we don't keep showing stale track info.
         if ($st{mpv_pid} && waitpid($st{mpv_pid}, WNOHANG) == $st{mpv_pid}) {
             verbose_log("TUI: mpv process died unexpectedly (possible stream drop/crash)");
             $st{mpv_pid}   = undef;
@@ -1498,7 +1804,9 @@ sub radio_tui {
             $st{msg_until} = $now + 5;
         }
 
-        if ($now - $st{last_poll} >= 1.5 && $st{mpv_pid}) {
+        # Poll the ICY title from mpv every 1.5s.  We skip polling while in
+        # search mode to avoid contending with the blocking search call.
+        if ($now - $st{last_poll} >= 1.5 && $st{mpv_pid} && !$st{search_mode}) {
             my $t = tui_query_track(\%st);
             if (defined $t && $t ne $st{track}) {
                 verbose_log("TUI: Track changed to: $t");
@@ -1507,21 +1815,12 @@ sub radio_tui {
             $st{last_poll} = $now;
         }
 
-        if ($now - $st{last_anim} >= 0.2) {
-            # Slight random walk so the meter feels alive but doesn't strobe.
-            my $delta = int(rand(3)) - 1;          # -1, 0, or +1
-            $st{signal} += $delta;
-            $st{signal} = 6  if $st{signal} < 6;
-            $st{signal} = 10 if $st{signal} > 10;
-            $st{pulse}  = $st{pulse} ? 0 : 1;
-            $st{last_anim} = $now;
-        }
-
         tui_draw(\%st);
     }
 
     $cleanup->();
 }
+
 
 # ------------------------------------------------------------------------------
 # load_afn_stations - Replace the current station list with American Forces
@@ -1576,6 +1875,7 @@ sub load_afn_stations {
     print "${GREEN}Loaded $count AFN radio stations.${RESET}\n";
     print "${DIM}American Forces Network - Serving U.S. military worldwide${RESET}\n\n";
 }
+
 
 # ==============================================================================
 # ARGUMENT PARSING
