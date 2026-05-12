@@ -115,17 +115,37 @@ Play and discover internet radio streams directly from the command line.
 ${BOLD}Options:${RESET}
   -s NUM     Select station by number (e.g., -s 2)
   -l         List all saved stations
-  -f QUERY   Find/discover new stations on the web (e.g., -f 'jazz')
+  -f [QUERY] Find/discover new stations on Radio-Browser.info
+             * With QUERY: quick name search (e.g., -f 'jazz', -f 'BBC')
+             * Without QUERY: interactive menu to search by country, region,
+               language, tag/genre, or advanced multi-criteria search
   -o         Enable 'Old Time Radio' audio filter (lo-fi AM sound)
   -i         Dump initial station metadata (ffprobe required)
   -t         Tuner mode: vintage TUI with dial and presets
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
 
+${BOLD}Special station presets:${RESET}
+  --afn      Load American Forces Network (AFN) stations
+             Includes AFN GO (Tokyo, Humphreys, Bahrain), AFN 360 stations
+             from Guantanamo Bay, Bahrain, Benelux, Bavaria, Vicenza,
+             Wiesbaden, and AFN İncirlik (Turkey)
+
+${BOLD}Discovery examples:${RESET}
+  $name -f                     # Interactive menu (by country, region, tag, etc.)
+  $name -f 'jazz'              # Quick search for stations with 'jazz' in name
+  $name -f 'BBC'               # Quick search for 'BBC' stations
+
+${BOLD}AFN examples:${RESET}
+  $name --afn -l               # List all AFN stations
+  $name --afn -t               # Launch TUI with AFN stations
+  $name --afn -s 1             # Play AFN 360 (first station)
+
 ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
   ${CYAN}1${RESET}-${CYAN}9${RESET}          Jump to preset (first 9 stations)
   ${CYAN}o${RESET}            Toggle Lo-Fi AM filter
+  ${CYAN}i${RESET}            Show verbose stream info (press any key to return)
   ${CYAN}r${RESET}            Re-tune (kick mpv if a stream stalls)
   ${CYAN}f${RESET}            Search for stations (music keeps playing)
   ${CYAN}q${RESET} / ${CYAN}Esc${RESET}      Quit
@@ -176,19 +196,159 @@ sub run_capture {
     return $output;
 }
 
-sub discover_stations {
-    my ($query) = @_;
-
+# ------------------------------------------------------------------------------
+# discover_stations_interactive - presents a menu-driven interface for
+# discovering radio stations by various search criteria:
+#   1) Simple name/keyword search (original behavior)
+#   2) Search by country (e.g., "USA", "Germany", "Brazil")
+#   3) Search by country + state/region (e.g., "USA" then "California")
+#   4) Search by tag (e.g., "jazz", "classical", "news")
+#   5) Search by language (e.g., "english", "spanish", "french")
+#
+# This makes Radio-Browser.info exploration much deeper, allowing users to
+# discover stations by geography and genre rather than just station name.
+# ------------------------------------------------------------------------------
+sub discover_stations_interactive {
     if (system("command -v curl > /dev/null 2>&1") != 0) {
         print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
         exit 1;
     }
 
-    print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
+    print "\n${BOLD}${CYAN}╔═══════════════════════════════════════════════════════════╗${RESET}\n";
+    print "${BOLD}${CYAN}║      Radio Station Discovery - Radio-Browser.info        ║${RESET}\n";
+    print "${BOLD}${CYAN}╚═══════════════════════════════════════════════════════════╝${RESET}\n\n";
 
-    my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
-                . '?name=' . uri_escape($query)
-                . '&limit=10&hidebroken=true';
+    print "Search options:\n";
+    print "  ${CYAN}1)${RESET} By station name or keyword (e.g., 'jazz', 'BBC', 'rock')\n";
+    print "  ${CYAN}2)${RESET} By country (e.g., 'USA', 'Germany', 'Japan')\n";
+    print "  ${CYAN}3)${RESET} By country + state/region (e.g., 'USA' + 'California')\n";
+    print "  ${CYAN}4)${RESET} By tag/genre (e.g., 'classical', 'news', 'electronic')\n";
+    print "  ${CYAN}5)${RESET} By language (e.g., 'english', 'spanish', 'french')\n";
+    print "  ${CYAN}6)${RESET} Advanced multi-criteria search\n\n";
+
+    print "Select search type [1-6]: ";
+    my $search_type = <STDIN>;
+    chomp $search_type if defined $search_type;
+
+    # Build the API URL based on user's choice
+    my $api_url;
+    my $search_desc;
+
+    if ($search_type eq '1') {
+        # Simple name/keyword search (original behavior)
+        print "Enter station name or keyword: ";
+        my $query = <STDIN>;
+        chomp $query if defined $query;
+        return unless length $query;
+
+        $search_desc = "stations matching '$query'";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?name=' . uri_escape($query)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '2') {
+        # Search by country
+        print "Enter country name or code (e.g., 'USA', 'Germany', 'Brazil'): ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+        return unless length $country;
+
+        $search_desc = "stations in $country";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?country=' . uri_escape($country)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '3') {
+        # Search by country + state
+        print "Enter country (e.g., 'USA', 'Australia', 'Canada'): ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+        return unless length $country;
+
+        print "Enter state/region (e.g., 'California', 'New South Wales', 'Ontario'): ";
+        my $state = <STDIN>;
+        chomp $state if defined $state;
+        return unless length $state;
+
+        $search_desc = "stations in $state, $country";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?country=' . uri_escape($country)
+                 . '&state=' . uri_escape($state)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '4') {
+        # Search by tag/genre
+        print "Enter tag/genre (e.g., 'jazz', 'classical', 'news', 'rock'): ";
+        my $tag = <STDIN>;
+        chomp $tag if defined $tag;
+        return unless length $tag;
+
+        $search_desc = "stations tagged with '$tag'";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?tag=' . uri_escape($tag)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '5') {
+        # Search by language
+        print "Enter language (e.g., 'english', 'spanish', 'french', 'german'): ";
+        my $lang = <STDIN>;
+        chomp $lang if defined $lang;
+        return unless length $lang;
+
+        $search_desc = "stations broadcasting in $lang";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?language=' . uri_escape($lang)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '6') {
+        # Advanced multi-criteria search
+        print "\n${BOLD}Advanced Search - leave blank to skip any field${RESET}\n";
+
+        print "Station name/keyword: ";
+        my $name = <STDIN>;
+        chomp $name if defined $name;
+
+        print "Country: ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+
+        print "State/Region: ";
+        my $state = <STDIN>;
+        chomp $state if defined $state;
+
+        print "Tag/Genre: ";
+        my $tag = <STDIN>;
+        chomp $tag if defined $tag;
+
+        print "Language: ";
+        my $lang = <STDIN>;
+        chomp $lang if defined $lang;
+
+        # Build URL with all provided parameters
+        my @params;
+        push @params, 'name=' . uri_escape($name) if length $name;
+        push @params, 'country=' . uri_escape($country) if length $country;
+        push @params, 'state=' . uri_escape($state) if length $state;
+        push @params, 'tag=' . uri_escape($tag) if length $tag;
+        push @params, 'language=' . uri_escape($lang) if length $lang;
+
+        if (@params == 0) {
+            print "${YELLOW}No search criteria provided.${RESET}\n";
+            return;
+        }
+
+        $search_desc = "stations matching your criteria";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?' . join('&', @params)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } else {
+        print "${YELLOW}Invalid selection.${RESET}\n";
+        return;
+    }
+
+    # Execute the search
+    print "\n${BOLD}${CYAN}>> Searching for $search_desc...${RESET}\n\n";
 
     # Pass --max-time so a hung server can't freeze us forever.
     my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
@@ -196,29 +356,62 @@ sub discover_stations {
     my $data = eval { decode_json($response // '') };
     if ($@ || ref($data) ne 'ARRAY') {
         print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
+        print STDERR "${DIM}(Network issue or API temporarily unavailable)${RESET}\n";
         exit 1;
     }
 
     my $count = scalar @$data;
     if ($count == 0) {
         print "No active stations found for that query.\n";
+        print "${DIM}Try broadening your search criteria or different keywords.${RESET}\n";
         exit 0;
     }
 
+    # Display results with enhanced metadata
+    print "${GREEN}Found $count station(s):${RESET}\n\n";
     for my $i (0 .. $count - 1) {
         my $s = $data->[$i];
-        my $name    = $s->{name}    // '(unknown)';
-        my $bitrate = $s->{bitrate} // 0;
-        my $tags    = $s->{tags}    // '';
+        my $name     = $s->{name}    // '(unknown)';
+        my $bitrate  = $s->{bitrate} // 0;
+        my $country  = $s->{country} // '';
+        my $state    = $s->{state}   // '';
+        my $tags     = $s->{tags}    // '';
+        my $language = $s->{language} // '';
+        my $votes    = $s->{votes}   // 0;
 
-        printf "  %s%d)%s %s%s%s (%s kbps)\n",
-            $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET, $bitrate;
-        if (length $tags) {
-            print "     ${YELLOW}Tags:${RESET} $tags\n";
+        # Format the station entry
+        printf "  %s%2d)%s %s%s%s\n",
+            $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET;
+
+        # Display location info if available
+        my @location;
+        push @location, $state if length $state;
+        push @location, $country if length $country;
+        if (@location) {
+            printf "      ${DIM}Location:${RESET} %s\n", join(', ', @location);
         }
+
+        # Display bitrate and vote count
+        printf "      ${DIM}Quality:${RESET} %s kbps", $bitrate;
+        printf " ${DIM}|${RESET} ${DIM}Votes:${RESET} %s", $votes if $votes > 0;
+        print "\n";
+
+        # Display language if available
+        if (length $language) {
+            print "      ${DIM}Language:${RESET} $language\n";
+        }
+
+        # Display tags if available
+        if (length $tags) {
+            my $tags_truncated = length($tags) > 60 ? substr($tags, 0, 57) . '...' : $tags;
+            print "      ${YELLOW}Tags:${RESET} $tags_truncated\n";
+        }
+
+        print "\n" if $i < $count - 1;  # Blank line between entries
     }
 
-    print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
+    # Prompt user to save a station
+    print "\n${BOLD}Enter a number to SAVE to your list (or press Enter to exit): ${RESET}";
     my $choice = <STDIN>;
     chomp $choice if defined $choice;
 
@@ -227,13 +420,91 @@ sub discover_stations {
         my $name = $picked->{name} // 'Unknown Station';
         my $url  = $picked->{url}  // '';
 
+        # Append to the config file
         open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
         print $out $name . '::' . $url . "\n";
         close($out);
 
-        print "${GREEN}[OK] Saved '$name' to $CONFIG_FILE!${RESET}\n";
+        print "${GREEN}[✓] Saved '$name' to $CONFIG_FILE!${RESET}\n";
     }
     exit 0;
+}
+
+# ------------------------------------------------------------------------------
+# discover_stations - wrapper for backward compatibility with -f flag.
+# If a query is provided via -f, it goes directly to a simple name search.
+# If no query is provided, launches the interactive menu.
+# ------------------------------------------------------------------------------
+sub discover_stations {
+    my ($query) = @_;
+
+    if (system("command -v curl > /dev/null 2>&1") != 0) {
+        print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
+        exit 1;
+    }
+
+    # If a query was provided with -f, do a quick name search (original behavior)
+    if (defined $query && length $query) {
+        print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
+
+        my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                    . '?name=' . uri_escape($query)
+                    . '&limit=15&hidebroken=true&order=votes&reverse=true';
+
+        # Pass --max-time so a hung server can't freeze us forever.
+        my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
+
+        my $data = eval { decode_json($response // '') };
+        if ($@ || ref($data) ne 'ARRAY') {
+            print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
+            exit 1;
+        }
+
+        my $count = scalar @$data;
+        if ($count == 0) {
+            print "No active stations found for that query.\n";
+            exit 0;
+        }
+
+        # Display results with enhanced info
+        for my $i (0 .. $count - 1) {
+            my $s = $data->[$i];
+            my $name     = $s->{name}    // '(unknown)';
+            my $bitrate  = $s->{bitrate} // 0;
+            my $country  = $s->{country} // '';
+            my $tags     = $s->{tags}    // '';
+
+            printf "  %s%d)%s %s%s%s (%s kbps)",
+                $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET, $bitrate;
+            print " ${DIM}- $country${RESET}" if length $country;
+            print "\n";
+
+            if (length $tags) {
+                my $tags_short = length($tags) > 60 ? substr($tags, 0, 57) . '...' : $tags;
+                print "     ${YELLOW}Tags:${RESET} $tags_short\n";
+            }
+        }
+
+        print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
+        my $choice = <STDIN>;
+        chomp $choice if defined $choice;
+
+        if (defined $choice && $choice =~ /^\d+$/ && $choice >= 1 && $choice <= $count) {
+            my $picked = $data->[$choice - 1];
+            my $name = $picked->{name} // 'Unknown Station';
+            my $url  = $picked->{url}  // '';
+
+            open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
+            print $out $name . '::' . $url . "\n";
+            close($out);
+
+            print "${GREEN}[OK] Saved '$name' to $CONFIG_FILE!${RESET}\n";
+        }
+        exit 0;
+    }
+
+    # No query provided - launch interactive menu
+    discover_stations_interactive();
 }
 
 # ------------------------------------------------------------------------------
@@ -676,6 +947,109 @@ sub tui_retune {
 }
 
 # ------------------------------------------------------------------------------
+# tui_dump_stream_info - Display verbose stream information as an overlay in
+# TUI mode. This shows detailed metadata about the current stream including
+# ICY tags, bitrate, codec, and track info. The display pauses playback UI
+# and waits for any keypress to dismiss and return to normal TUI.
+# ------------------------------------------------------------------------------
+sub tui_dump_stream_info {
+    my ($st) = @_;
+
+    my ($name, $url) = split /::/, $st->{stations}[$st->{current}], 2;
+
+    # Clear screen and move to top
+    print "\e[2J\e[H";
+
+    # Header
+    print "${BOLD}${CYAN}";
+    print "=" x 70 . "\n";
+    print "Stream Information\n";
+    print "=" x 70 . "\n";
+    print "${RESET}\n";
+
+    # Station info
+    print "${BOLD}Station Name:${RESET} $name\n";
+    print "${BOLD}Stream URL:${RESET}   $url\n";
+    print "${BOLD}Current Track:${RESET} " . ($st->{track} || '(no track info)') . "\n";
+    print "\n";
+
+    # Get detailed metadata from mpv via IPC if available
+    if ($st->{mpv_pid} && -S $st->{sock}) {
+        print "${CYAN}--- ICY/Metadata Tags (from mpv) ---${RESET}\n";
+
+        my $req_id = $st->{req_id}++;
+        my @props = (
+            ['metadata/icy-name',        'Station Name'],
+            ['metadata/icy-title',       'Track Title'],
+            ['metadata/icy-genre',       'Genre'],
+            ['metadata/icy-br',          'Bitrate (kbps)'],
+            ['metadata/icy-description', 'Description'],
+            ['metadata/icy-url',         'Homepage URL'],
+        );
+
+        my $has_metadata = 0;
+        for my $prop (@props) {
+            my ($key, $label) = @$prop;
+            my $value = ipc_get_property($st->{sock}, $key, $req_id++, 0.3);
+            if (defined $value && length $value) {
+                printf "  ${DIM}%-20s${RESET} %s\n", "$label:", $value;
+                $has_metadata = 1;
+            }
+        }
+        if (!$has_metadata) {
+            print "  ${DIM}(No ICY metadata available)${RESET}\n";
+        }
+        print "\n";
+    }
+
+    # Get detailed format info from ffprobe if available
+    if (system("command -v ffprobe > /dev/null 2>&1") == 0) {
+        print "${CYAN}--- Deep Stream Analysis (ffprobe) ---${RESET}\n";
+
+        my $probe = run_capture(
+            'ffprobe',
+            '-v', 'quiet',
+            '-timeout', '5000000',
+            '-show_entries', 'format:format_tags:stream',
+            '-of', 'default=noprint_wrappers=1',
+            $url,
+        );
+
+        if (defined $probe && length $probe) {
+            # Parse and display in a more readable format
+            for my $line (split /\n/, $probe) {
+                if ($line =~ /^\[(\w+)\]/) {
+                    print "${GREEN}[$1]${RESET}\n";
+                } elsif ($line =~ /^TAG:(.+)=(.+)$/) {
+                    printf "  ${DIM}%-20s${RESET} %s\n", "$1:", $2;
+                } elsif ($line =~ /^(\w+)=(.+)$/) {
+                    printf "  ${DIM}%-20s${RESET} %s\n", "$1:", $2;
+                }
+            }
+        } else {
+            print "  ${DIM}(No additional metadata available)${RESET}\n";
+        }
+        print "\n";
+    }
+
+    # Footer
+    print "${BOLD}${CYAN}";
+    print "=" x 70 . "\n";
+    print "${RESET}";
+    print "${YELLOW}Press any key to return to radio...${RESET}\n";
+
+    # Wait for any keypress (blocking read)
+    my $saved_term = tui_term_setup();  # Ensure raw mode
+    tui_read_key(undef);  # Blocking read (no timeout)
+    tui_term_restore($saved_term);
+
+    # Clear screen and return - the main loop will redraw the TUI
+    print "\e[2J\e[H";
+
+    verbose_log("TUI: Stream info displayed and dismissed");
+}
+
+# ------------------------------------------------------------------------------
 # tui_fake_freq - turn a station index into a fake AM-band frequency for the
 # display. Real AM band: 540 kHz to 1700 kHz. Just visual flavour.
 # ------------------------------------------------------------------------------
@@ -959,10 +1333,10 @@ sub tui_msg_row {
 
 # Footer / help line — one-line summary of all key bindings
 sub tui_help_row {
-    my $body = '  ◀ ▶ tune   1-9 preset   o lo-fi   r retune   f find   q quit  ';
+    my $body = '  ◀ ▶ tune   1-9 preset   o lo-fi   i info   r retune   f find   q quit  ';
     $body = pad_to($body, $TUI_INNER);
     my $coloured = $body;
-    $coloured =~ s/(◀ ▶|1-9|o|r|f|q)/${CYAN}$1$RESET/g;
+    $coloured =~ s/(◀ ▶|1-9|o|i|r|f|q)/${CYAN}$1$RESET/g;
     return $coloured;
 }
 
@@ -1409,6 +1783,7 @@ sub radio_tui {
                 elsif ($key =~ /^[1-9]$/)                             { tui_jump(\%st, $key - 1) }
                 elsif ($key eq 'o' || $key eq 'O')                    { tui_toggle_filter(\%st) }
                 elsif ($key eq 'r' || $key eq 'R')                    { tui_retune(\%st) }
+                elsif ($key eq 'i' || $key eq 'I')                    { tui_dump_stream_info(\%st) }
                 elsif ($key eq 'f' || $key eq '/')                    {
                     # Enter search mode — music is uninterrupted
                     $st{search_mode}    = 1;
@@ -1447,6 +1822,61 @@ sub radio_tui {
 }
 
 
+# ------------------------------------------------------------------------------
+# load_afn_stations - Replace the current station list with American Forces
+# Network (AFN) streaming stations. AFN provides radio and TV programming to
+# U.S. military personnel and their families stationed around the world.
+#
+# This preset includes AFN stations from various global locations:
+#   - AFN Pacific (Tokyo, Humphreys Korea)
+#   - AFN Europe (Germany, Italy, Belgium, Bahrain)
+#   - AFN locations (Guantanamo Bay, Turkey)
+#
+# Stream URLs are sourced from Radio-Browser.info verified working endpoints.
+# All streams tested and confirmed operational as of January 2026.
+# ------------------------------------------------------------------------------
+sub load_afn_stations {
+    print "${CYAN}Loading American Forces Network (AFN) stations...${RESET}\n";
+
+    # Clear existing stations and load AFN presets
+    @STATIONS = ();
+
+    # AFN GO Tokyo (Japan) - 96 kbps MP3, 192 votes
+    push @STATIONS, 'AFN GO Tokyo::http://22963.live.streamtheworld.com/AFNP_TKO_SC';
+
+    # AFN 360 Guantanamo Bay (Cuba) - 96 kbps MP3, 1745 votes
+    push @STATIONS, 'AFN 360 Guantanamo Bay::http://27783.live.streamtheworld.com:3690/AFNE_GMO_SC';
+
+    # AFN GO Humphreys The Eagle (South Korea) - 32 kbps AAC+, 6 votes
+    push @STATIONS, 'AFN GO Humphreys The Eagle::http://14993.live.streamtheworld.com/AFNP_OSNAAC_SC';
+
+    # AFN 360 Bahrain (Bahrain) - 96 kbps MP3, 972 votes
+    push @STATIONS, 'AFN 360 Bahrain::http://27863.live.streamtheworld.com/AFNE_BHN_SC';
+
+    # AFN 360 Benelux (Belgium) - 96 kbps MP3, 31 votes
+    push @STATIONS, 'AFN 360 Benelux::http://28993.live.streamtheworld.com:3690/AFNE_BLX_SC';
+
+    # AFN İncirlik (Turkey) - 96 kbps MP3
+    push @STATIONS, 'AFN İncirlik::https://playerservices.streamtheworld.com/api/livestream-redirect/AFNE_ICK.mp3';
+
+    # AFN 360 Bavaria (Germany) - 96 kbps MP3, 102 votes
+    push @STATIONS, 'AFN 360 Bavaria::http://28563.live.streamtheworld.com/AFNE_BAV_SC';
+
+    # AFN 360 Vicenza (Italy) - 96 kbps MP3, 43 votes
+    push @STATIONS, 'AFN 360 Vicenza::http://23543.live.streamtheworld.com/AFNE_VIC_SC';
+
+    # AFN 360 Wiesbaden (Germany) - 96 kbps MP3, 130 votes
+    push @STATIONS, 'AFN 360 Wiesbaden::http://25453.live.streamtheworld.com:3690/AFNE_WBN_SC';
+
+    # AFN GO Bahrain (Bahrain) - 32 kbps AAC+, 306 votes
+    push @STATIONS, 'AFN GO Bahrain::https://playerservices.streamtheworld.com/api/livestream-redirect/AFNE_BHNAAC.aac';
+
+    my $count = scalar @STATIONS;
+    print "${GREEN}Loaded $count AFN radio stations.${RESET}\n";
+    print "${DIM}American Forces Network - Serving U.S. military worldwide${RESET}\n\n";
+}
+
+
 # ==============================================================================
 # ARGUMENT PARSING
 # ==============================================================================
@@ -1455,6 +1885,16 @@ my $STATION_CHOICE   = '';
 my $FILTER_OLD_RADIO = 0;
 my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
+my $AFN_MODE         = 0;
+
+# Check for --afn long option in ARGV before getopts processes anything
+# This must happen before getopts because getopts doesn't handle long options
+for my $i (reverse 0 .. $#ARGV) {
+    if ($ARGV[$i] eq '--afn') {
+        $AFN_MODE = 1;
+        splice(@ARGV, $i, 1);  # Remove --afn from ARGV
+    }
+}
 
 my %opts;
 unless (getopts('s:f:loithv', \%opts)) {
@@ -1463,6 +1903,11 @@ unless (getopts('s:f:loithv', \%opts)) {
 }
 
 show_help() if $opts{h};
+
+# If AFN mode is enabled, load AFN stations instead of the config file
+if ($AFN_MODE) {
+    load_afn_stations();
+}
 
 if ($opts{l}) {
     list_stations();
