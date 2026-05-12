@@ -1256,14 +1256,19 @@ sub tui_search_select {
     my $url  = $r->{url}  // '';
     return unless length $name && length $url;
 
+    # Strip any embedded newlines that a malformed API response might carry;
+    # the config file format uses one "Name::URL" entry per line.
+    $name =~ s/[\r\n]+/ /g;
+    $url  =~ s/[\r\n]+//g;
+
     # Persist the chosen station so it appears in future sessions.
     if (open(my $fh, '>>', $CONFIG_FILE)) {
-        print $fh "$name\:\:$url\n";
+        print $fh $name . '::' . $url . "\n";
         close $fh;
     }
 
     # Hot-add the station to the in-memory list and switch mpv to it.
-    push @STATIONS, "$name\:\:$url";
+    push @STATIONS, $name . '::' . $url;
     $st->{stations} = \@STATIONS;
     $st->{current}  = $#STATIONS;
     tui_stop_mpv($st);
@@ -1354,8 +1359,10 @@ sub radio_tui {
     while (1) {
 
         # ---- Terminal resize handling -------------------------------------
-        # On SIGWINCH, re-measure the terminal.  If it is now too small,
-        # pause and show an error until the user resizes it back.
+        # On SIGWINCH, re-measure the terminal.  The stored $rows/$cols keep
+        # their previous values until a new SIGWINCH triggers a fresh read,
+        # so the too-small check below keeps firing (without extra stty calls)
+        # until the user grows the window and SIGWINCH fires again.
         if ($need_resize) {
             $need_resize = 0;
             ($rows, $cols) = tui_term_size();
@@ -1365,7 +1372,6 @@ sub radio_tui {
             printf "${YELLOW}Terminal too small (%dx%d) — resize to at least %dx%d.${RESET}\n",
                    $cols, $rows, $TUI_WIDTH, $TUI_HEIGHT;
             print "Resize the terminal window to continue...\n";
-            $need_resize = 1;   # keep checking every iteration
             sleep 0.3;
             next;
         }
