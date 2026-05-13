@@ -1383,6 +1383,7 @@ sub tui_search_content_rows {
     my $mode    = $st->{search_mode};
     my $query   = $st->{search_query} // '';
     my @results = @{ $st->{search_results} // [] };
+    my $page    = $st->{search_page} // 0;
 
     # ---- Search prompt card row ------------------------------------------
     # The card is 60 chars wide (3-space margin + │ + 58 content + │ + space).
@@ -1409,20 +1410,32 @@ sub tui_search_content_rows {
             : '   Type a station name and press Enter to search';
     } else {
         my $n = scalar @results;
-        $status_text = $n
-            ? sprintf('   Found %d station(s) — press 1-%d to tune in and save',
-                      $n, $n > 9 ? 9 : $n)
-            : '   No stations found. Try a different query.';
+        if ($n > 0) {
+            my $total_pages = int(($n - 1) / 5) + 1;
+            my $current_page = $page + 1;
+            my $start_idx = $page * 5 + 1;
+            my $end_idx = ($page + 1) * 5;
+            $end_idx = $n if $end_idx > $n;
+
+            $status_text = sprintf('   %d results (page %d/%d, showing %d-%d) — press 1-5 to tune',
+                                   $n, $current_page, $total_pages, $start_idx, $end_idx);
+            $status_text .= ', n/p for next/prev' if $total_pages > 1;
+        } else {
+            $status_text = '   No stations found. Try a different query.';
+        }
     }
     my $status = pad_to($status_text, $TUI_INNER);
-    # Highlight the key-range hint if present
-    (my $status_colored = $status) =~ s/(\d+-\d+)/${CYAN}$1$RESET/;
+    # Highlight key hints if present
+    (my $status_colored = $status) =~ s/(1-\d+|n\/p)/${CYAN}$1$RESET/g;
 
     # ---- Result rows (5 slots) -------------------------------------------
     # Each result row: "   N) <name padded to fill>  NNN kbps"
     my @result_rows;
+    my $page_start = $page * 5;
     for my $i (0 .. 4) {
-        my $r = $results[$i];
+        my $result_idx = $page_start + $i;
+        my $r = $result_idx < @results ? $results[$result_idx] : undef;
+
         if (defined $r) {
             my $num_str = sprintf '%d) ', $i + 1;          # "N) " = 3 chars
             my $bitrate = $r->{bitrate}
@@ -1451,7 +1464,7 @@ sub tui_search_content_rows {
         $card_row,             # row 5:  │ Search: [query]_                 │
         tui_card_bot(),        # row 6:  └──────────────────────────────────┘
         tui_blank_row(),       # row 7:  blank
-        $status_colored,       # row 8:  instructions / result count
+        $status_colored,       # row 8:  instructions / result count / page info
         @result_rows,          # rows 9-13: up to 5 search results (or blanks)
         tui_blank_row(),       # row 14: blank
         tui_status_row($st),   # row 15: preset buttons (unchanged during search)
@@ -1585,7 +1598,7 @@ sub tui_do_search {
 
     my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
                 . '?name=' . uri_escape($query)
-                . '&limit=9&hidebroken=true&order=votes&reverse=true';
+                . '&limit=50&hidebroken=true&order=votes&reverse=true';
 
     # run_capture uses list-form exec so the query string can never be
     # misinterpreted as shell code even if it contains metacharacters.
@@ -1612,7 +1625,9 @@ sub tui_do_search {
     }
 
     # Advance to results-display state so the user can pick a station.
+    # Reset to first page of results.
     $st->{search_mode} = 2;
+    $st->{search_page} = 0;
 }
 
 # ------------------------------------------------------------------------------
@@ -1620,9 +1635,12 @@ sub tui_do_search {
 # to it without stopping playback of the current stream first.
 # ------------------------------------------------------------------------------
 sub tui_search_select {
-    my ($st, $n) = @_;   # $n is 1-based choice from the result list
+    my ($st, $n) = @_;   # $n is 1-based choice from the result list (1-5)
     my @results = @{ $st->{search_results} // [] };
-    my $idx = $n - 1;
+    my $page    = $st->{search_page} // 0;
+
+    # Calculate actual index based on current page
+    my $idx = ($page * 5) + $n - 1;
     return if $idx < 0 || $idx >= @results;
 
     my $r    = $results[$idx];
@@ -1693,6 +1711,7 @@ sub radio_tui {
         search_mode    => 0,   # 0=off  1=typing query  2=showing results
         search_query   => '',
         search_results => [],
+        search_page    => 0,   # current page of results (5 results per page)
     );
 
     my $saved_term = tui_term_setup();
@@ -1760,12 +1779,23 @@ sub radio_tui {
                     $st{search_mode}    = 0;
                     $st{search_query}   = '';
                     $st{search_results} = [];
-                } elsif ($st{search_mode} == 2 && $key =~ /^[1-9]$/) {
+                    $st{search_page}    = 0;
+                } elsif ($st{search_mode} == 2 && $key =~ /^[1-5]$/) {
                     # Result selection: save station and switch mpv to it
                     tui_search_select(\%st, int($key));
+                } elsif ($st{search_mode} == 2 && ($key eq 'n' || $key eq 'N')) {
+                    # Next page
+                    my @results = @{ $st{search_results} // [] };
+                    my $total_pages = int((scalar(@results) - 1) / 5) + 1;
+                    $st{search_page} = ($st{search_page} + 1) % $total_pages if $total_pages > 1;
+                } elsif ($st{search_mode} == 2 && ($key eq 'p' || $key eq 'P')) {
+                    # Previous page
+                    my @results = @{ $st{search_results} // [] };
+                    my $total_pages = int((scalar(@results) - 1) / 5) + 1;
+                    $st{search_page} = ($st{search_page} - 1 + $total_pages) % $total_pages if $total_pages > 1;
                 } elsif ($st{search_mode} == 1) {
-                    if ($key eq "\r") {
-                        # Enter: run the blocking API search
+                    if ($key eq "\n" || $key eq "\r") {
+                        # Enter: run the blocking API search (handle both Unix \n and Windows \r)
                         tui_do_search(\%st);
                     } elsif ($key eq "\x7f" || $key eq "\x08") {
                         # Backspace / Delete: remove last character of query
