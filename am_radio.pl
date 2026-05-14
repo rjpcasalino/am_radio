@@ -11,8 +11,8 @@
 #   * Discovers new stations via the public Radio-Browser.info API
 #   * Optionally applies a lo-fi "old time AM radio" audio filter
 #   * Optionally dumps stream metadata (ICY/ID3 tags) using 'ffprobe'
-#   * Optionally drives a vintage-tube-radio TUI (-t) with frequency dial,
-#     pulsing ON AIR lamp, animated signal meter and live track display
+#   * Optionally drives a vintage-tube-radio TUI (-t) with AM_RADIO branding,
+#     frequency dial, presets, live track display and in-TUI station search
 #
 # External programs required at runtime:
 #   * mpv      - to actually play the audio (mandatory)
@@ -115,18 +115,39 @@ Play and discover internet radio streams directly from the command line.
 ${BOLD}Options:${RESET}
   -s NUM     Select station by number (e.g., -s 2)
   -l         List all saved stations
-  -f QUERY   Find/discover new stations on the web (e.g., -f 'jazz')
+  -f [QUERY] Find/discover new stations on Radio-Browser.info
+             * With QUERY: quick name search (e.g., -f 'jazz', -f 'BBC')
+             * Without QUERY: interactive menu to search by country, region,
+               language, tag/genre, or advanced multi-criteria search
   -o         Enable 'Old Time Radio' audio filter (lo-fi AM sound)
   -i         Dump initial station metadata (ffprobe required)
-  -t         Tuner mode: vintage TUI with dial, signal meter and ON AIR lamp
+  -t         Tuner mode: vintage TUI with dial and presets
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
+
+${BOLD}Special station presets:${RESET}
+  --afn      Load American Forces Network (AFN) stations
+             Includes AFN GO (Tokyo, Humphreys, Bahrain), AFN 360 stations
+             from Guantanamo Bay, Bahrain, Benelux, Bavaria, Vicenza,
+             Wiesbaden, and AFN İncirlik (Turkey)
+
+${BOLD}Discovery examples:${RESET}
+  $name -f                     # Interactive menu (by country, region, tag, etc.)
+  $name -f 'jazz'              # Quick search for stations with 'jazz' in name
+  $name -f 'BBC'               # Quick search for 'BBC' stations
+
+${BOLD}AFN examples:${RESET}
+  $name --afn -l               # List all AFN stations
+  $name --afn -t               # Launch TUI with AFN stations
+  $name --afn -s 1             # Play AFN 360 (first station)
 
 ${BOLD}Tuner mode keys:${RESET}
   ${CYAN}<-${RESET} ${CYAN}->${RESET}        Tune to previous / next station
   ${CYAN}1${RESET}-${CYAN}9${RESET}          Jump to preset (first 9 stations)
   ${CYAN}o${RESET}            Toggle Lo-Fi AM filter
+  ${CYAN}i${RESET}            Show verbose stream info (press any key to return)
   ${CYAN}r${RESET}            Re-tune (kick mpv if a stream stalls)
+  ${CYAN}f${RESET}            Search for stations (music keeps playing)
   ${CYAN}q${RESET} / ${CYAN}Esc${RESET}      Quit
 END
     exit 0;
@@ -175,19 +196,159 @@ sub run_capture {
     return $output;
 }
 
-sub discover_stations {
-    my ($query) = @_;
-
+# ------------------------------------------------------------------------------
+# discover_stations_interactive - presents a menu-driven interface for
+# discovering radio stations by various search criteria:
+#   1) Simple name/keyword search (original behavior)
+#   2) Search by country (e.g., "USA", "Germany", "Brazil")
+#   3) Search by country + state/region (e.g., "USA" then "California")
+#   4) Search by tag (e.g., "jazz", "classical", "news")
+#   5) Search by language (e.g., "english", "spanish", "french")
+#
+# This makes Radio-Browser.info exploration much deeper, allowing users to
+# discover stations by geography and genre rather than just station name.
+# ------------------------------------------------------------------------------
+sub discover_stations_interactive {
     if (system("command -v curl > /dev/null 2>&1") != 0) {
         print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
         exit 1;
     }
 
-    print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
+    print "\n${BOLD}${CYAN}╔═══════════════════════════════════════════════════════════╗${RESET}\n";
+    print "${BOLD}${CYAN}║      Radio Station Discovery - Radio-Browser.info        ║${RESET}\n";
+    print "${BOLD}${CYAN}╚═══════════════════════════════════════════════════════════╝${RESET}\n\n";
 
-    my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
-                . '?name=' . uri_escape($query)
-                . '&limit=10&hidebroken=true';
+    print "Search options:\n";
+    print "  ${CYAN}1)${RESET} By station name or keyword (e.g., 'jazz', 'BBC', 'rock')\n";
+    print "  ${CYAN}2)${RESET} By country (e.g., 'USA', 'Germany', 'Japan')\n";
+    print "  ${CYAN}3)${RESET} By country + state/region (e.g., 'USA' + 'California')\n";
+    print "  ${CYAN}4)${RESET} By tag/genre (e.g., 'classical', 'news', 'electronic')\n";
+    print "  ${CYAN}5)${RESET} By language (e.g., 'english', 'spanish', 'french')\n";
+    print "  ${CYAN}6)${RESET} Advanced multi-criteria search\n\n";
+
+    print "Select search type [1-6]: ";
+    my $search_type = <STDIN>;
+    chomp $search_type if defined $search_type;
+
+    # Build the API URL based on user's choice
+    my $api_url;
+    my $search_desc;
+
+    if ($search_type eq '1') {
+        # Simple name/keyword search (original behavior)
+        print "Enter station name or keyword: ";
+        my $query = <STDIN>;
+        chomp $query if defined $query;
+        return unless length $query;
+
+        $search_desc = "stations matching '$query'";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?name=' . uri_escape($query)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '2') {
+        # Search by country
+        print "Enter country name or code (e.g., 'USA', 'Germany', 'Brazil'): ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+        return unless length $country;
+
+        $search_desc = "stations in $country";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?country=' . uri_escape($country)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '3') {
+        # Search by country + state
+        print "Enter country (e.g., 'USA', 'Australia', 'Canada'): ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+        return unless length $country;
+
+        print "Enter state/region (e.g., 'California', 'New South Wales', 'Ontario'): ";
+        my $state = <STDIN>;
+        chomp $state if defined $state;
+        return unless length $state;
+
+        $search_desc = "stations in $state, $country";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?country=' . uri_escape($country)
+                 . '&state=' . uri_escape($state)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '4') {
+        # Search by tag/genre
+        print "Enter tag/genre (e.g., 'jazz', 'classical', 'news', 'rock'): ";
+        my $tag = <STDIN>;
+        chomp $tag if defined $tag;
+        return unless length $tag;
+
+        $search_desc = "stations tagged with '$tag'";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?tag=' . uri_escape($tag)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '5') {
+        # Search by language
+        print "Enter language (e.g., 'english', 'spanish', 'french', 'german'): ";
+        my $lang = <STDIN>;
+        chomp $lang if defined $lang;
+        return unless length $lang;
+
+        $search_desc = "stations broadcasting in $lang";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?language=' . uri_escape($lang)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } elsif ($search_type eq '6') {
+        # Advanced multi-criteria search
+        print "\n${BOLD}Advanced Search - leave blank to skip any field${RESET}\n";
+
+        print "Station name/keyword: ";
+        my $name = <STDIN>;
+        chomp $name if defined $name;
+
+        print "Country: ";
+        my $country = <STDIN>;
+        chomp $country if defined $country;
+
+        print "State/Region: ";
+        my $state = <STDIN>;
+        chomp $state if defined $state;
+
+        print "Tag/Genre: ";
+        my $tag = <STDIN>;
+        chomp $tag if defined $tag;
+
+        print "Language: ";
+        my $lang = <STDIN>;
+        chomp $lang if defined $lang;
+
+        # Build URL with all provided parameters
+        my @params;
+        push @params, 'name=' . uri_escape($name) if length $name;
+        push @params, 'country=' . uri_escape($country) if length $country;
+        push @params, 'state=' . uri_escape($state) if length $state;
+        push @params, 'tag=' . uri_escape($tag) if length $tag;
+        push @params, 'language=' . uri_escape($lang) if length $lang;
+
+        if (@params == 0) {
+            print "${YELLOW}No search criteria provided.${RESET}\n";
+            return;
+        }
+
+        $search_desc = "stations matching your criteria";
+        $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                 . '?' . join('&', @params)
+                 . '&limit=25&hidebroken=true&order=votes&reverse=true';
+
+    } else {
+        print "${YELLOW}Invalid selection.${RESET}\n";
+        return;
+    }
+
+    # Execute the search
+    print "\n${BOLD}${CYAN}>> Searching for $search_desc...${RESET}\n\n";
 
     # Pass --max-time so a hung server can't freeze us forever.
     my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
@@ -195,29 +356,62 @@ sub discover_stations {
     my $data = eval { decode_json($response // '') };
     if ($@ || ref($data) ne 'ARRAY') {
         print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
+        print STDERR "${DIM}(Network issue or API temporarily unavailable)${RESET}\n";
         exit 1;
     }
 
     my $count = scalar @$data;
     if ($count == 0) {
         print "No active stations found for that query.\n";
+        print "${DIM}Try broadening your search criteria or different keywords.${RESET}\n";
         exit 0;
     }
 
+    # Display results with enhanced metadata
+    print "${GREEN}Found $count station(s):${RESET}\n\n";
     for my $i (0 .. $count - 1) {
         my $s = $data->[$i];
-        my $name    = $s->{name}    // '(unknown)';
-        my $bitrate = $s->{bitrate} // 0;
-        my $tags    = $s->{tags}    // '';
+        my $name     = $s->{name}    // '(unknown)';
+        my $bitrate  = $s->{bitrate} // 0;
+        my $country  = $s->{country} // '';
+        my $state    = $s->{state}   // '';
+        my $tags     = $s->{tags}    // '';
+        my $language = $s->{language} // '';
+        my $votes    = $s->{votes}   // 0;
 
-        printf "  %s%d)%s %s%s%s (%s kbps)\n",
-            $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET, $bitrate;
-        if (length $tags) {
-            print "     ${YELLOW}Tags:${RESET} $tags\n";
+        # Format the station entry
+        printf "  %s%2d)%s %s%s%s\n",
+            $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET;
+
+        # Display location info if available
+        my @location;
+        push @location, $state if length $state;
+        push @location, $country if length $country;
+        if (@location) {
+            printf "      ${DIM}Location:${RESET} %s\n", join(', ', @location);
         }
+
+        # Display bitrate and vote count
+        printf "      ${DIM}Quality:${RESET} %s kbps", $bitrate;
+        printf " ${DIM}|${RESET} ${DIM}Votes:${RESET} %s", $votes if $votes > 0;
+        print "\n";
+
+        # Display language if available
+        if (length $language) {
+            print "      ${DIM}Language:${RESET} $language\n";
+        }
+
+        # Display tags if available
+        if (length $tags) {
+            my $tags_truncated = length($tags) > 60 ? substr($tags, 0, 57) . '...' : $tags;
+            print "      ${YELLOW}Tags:${RESET} $tags_truncated\n";
+        }
+
+        print "\n" if $i < $count - 1;  # Blank line between entries
     }
 
-    print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
+    # Prompt user to save a station
+    print "\n${BOLD}Enter a number to SAVE to your list (or press Enter to exit): ${RESET}";
     my $choice = <STDIN>;
     chomp $choice if defined $choice;
 
@@ -226,13 +420,91 @@ sub discover_stations {
         my $name = $picked->{name} // 'Unknown Station';
         my $url  = $picked->{url}  // '';
 
+        # Append to the config file
         open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
         print $out $name . '::' . $url . "\n";
         close($out);
 
-        print "${GREEN}[OK] Saved '$name' to $CONFIG_FILE!${RESET}\n";
+        print "${GREEN}[✓] Saved '$name' to $CONFIG_FILE!${RESET}\n";
     }
     exit 0;
+}
+
+# ------------------------------------------------------------------------------
+# discover_stations - wrapper for backward compatibility with -f flag.
+# If a query is provided via -f, it goes directly to a simple name search.
+# If no query is provided, launches the interactive menu.
+# ------------------------------------------------------------------------------
+sub discover_stations {
+    my ($query) = @_;
+
+    if (system("command -v curl > /dev/null 2>&1") != 0) {
+        print STDERR "${YELLOW}Error: Stream discovery requires 'curl' to be installed.${RESET}\n";
+        exit 1;
+    }
+
+    # If a query was provided with -f, do a quick name search (original behavior)
+    if (defined $query && length $query) {
+        print "\n${BOLD}${CYAN}>> Searching Radio-Browser.info for: '$query'...${RESET}\n\n";
+
+        my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                    . '?name=' . uri_escape($query)
+                    . '&limit=15&hidebroken=true&order=votes&reverse=true';
+
+        # Pass --max-time so a hung server can't freeze us forever.
+        my $response = run_capture('curl', '-sL', '--max-time', '10', $api_url);
+
+        my $data = eval { decode_json($response // '') };
+        if ($@ || ref($data) ne 'ARRAY') {
+            print STDERR "${YELLOW}Error: Could not parse response from Radio-Browser.info.${RESET}\n";
+            exit 1;
+        }
+
+        my $count = scalar @$data;
+        if ($count == 0) {
+            print "No active stations found for that query.\n";
+            exit 0;
+        }
+
+        # Display results with enhanced info
+        for my $i (0 .. $count - 1) {
+            my $s = $data->[$i];
+            my $name     = $s->{name}    // '(unknown)';
+            my $bitrate  = $s->{bitrate} // 0;
+            my $country  = $s->{country} // '';
+            my $tags     = $s->{tags}    // '';
+
+            printf "  %s%d)%s %s%s%s (%s kbps)",
+                $CYAN, $i + 1, $RESET, $BOLD, $name, $RESET, $bitrate;
+            print " ${DIM}- $country${RESET}" if length $country;
+            print "\n";
+
+            if (length $tags) {
+                my $tags_short = length($tags) > 60 ? substr($tags, 0, 57) . '...' : $tags;
+                print "     ${YELLOW}Tags:${RESET} $tags_short\n";
+            }
+        }
+
+        print "\nEnter a number to SAVE to your list (or press Enter to exit): ";
+        my $choice = <STDIN>;
+        chomp $choice if defined $choice;
+
+        if (defined $choice && $choice =~ /^\d+$/ && $choice >= 1 && $choice <= $count) {
+            my $picked = $data->[$choice - 1];
+            my $name = $picked->{name} // 'Unknown Station';
+            my $url  = $picked->{url}  // '';
+
+            open(my $out, '>>', $CONFIG_FILE) or die "Cannot append to $CONFIG_FILE: $!";
+            print $out $name . '::' . $url . "\n";
+            close($out);
+
+            print "${GREEN}[OK] Saved '$name' to $CONFIG_FILE!${RESET}\n";
+        }
+        exit 0;
+    }
+
+    # No query provided - launch interactive menu
+    discover_stations_interactive();
 }
 
 # ------------------------------------------------------------------------------
@@ -416,7 +688,7 @@ sub poll_track_loop {
 # Layout (66 cols x 22 rows, Unicode box drawing):
 #
 #   ╔════════════════════════════════════════════════════════════════╗
-#   ║ ● ON AIR             RADIO TERMINAL              [Lo-Fi:OFF ]  ║
+#   ║                          AM_RADIO                 [Lo-Fi:OFF] ║
 #   ╠════════════════════════════════════════════════════════════════╣
 #   ║                                                                ║
 #   ║   ┌──────────────────────────────────────────────────────────┐ ║
@@ -430,12 +702,16 @@ sub poll_track_loop {
 #   ║   ╎    ╎    ╎    │    ╎    ╎    ╎    ╎    ╎    ╎    ╎    ╎    ║
 #   ║   540   700  900  1080  1260 1440  1620 1700               kHz ║
 #   ║                                                                ║
-#   ║   SIGNAL ▰▰▰▰▰▰▰▱▱▱      PRESETS  1 2 3 4 5 6 7 8 9            ║
+#   ║                         PRESETS  1 2 3 4 5 6 7 8 9            ║
 #   ║                                                                ║
 #   ║   > Tuning…                                                    ║
 #   ╠════════════════════════════════════════════════════════════════╣
-#   ║   ◀ ▶ tune    1-9 preset    o filter    r retune    q quit    ║
+#   ║  ◀ ▶ tune   1-9 preset   o lo-fi   r retune   f find   q quit ║
 #   ╚════════════════════════════════════════════════════════════════╝
+#
+# In search mode (press f), the content area (rows 3-17) is replaced with a
+# search prompt card and up to 5 Radio-Browser.info results. Music is
+# uninterrupted because mpv runs as a separate child process.
 #
 # The TUI process layout:
 #
@@ -671,6 +947,109 @@ sub tui_retune {
 }
 
 # ------------------------------------------------------------------------------
+# tui_dump_stream_info - Display verbose stream information as an overlay in
+# TUI mode. This shows detailed metadata about the current stream including
+# ICY tags, bitrate, codec, and track info. The display pauses playback UI
+# and waits for any keypress to dismiss and return to normal TUI.
+# ------------------------------------------------------------------------------
+sub tui_dump_stream_info {
+    my ($st) = @_;
+
+    my ($name, $url) = split /::/, $st->{stations}[$st->{current}], 2;
+
+    # Clear screen and move to top
+    print "\e[2J\e[H";
+
+    # Header
+    print "${BOLD}${CYAN}";
+    print "=" x 70 . "\n";
+    print "Stream Information\n";
+    print "=" x 70 . "\n";
+    print "${RESET}\n";
+
+    # Station info
+    print "${BOLD}Station Name:${RESET} $name\n";
+    print "${BOLD}Stream URL:${RESET}   $url\n";
+    print "${BOLD}Current Track:${RESET} " . ($st->{track} || '(no track info)') . "\n";
+    print "\n";
+
+    # Get detailed metadata from mpv via IPC if available
+    if ($st->{mpv_pid} && -S $st->{sock}) {
+        print "${CYAN}--- ICY/Metadata Tags (from mpv) ---${RESET}\n";
+
+        my $req_id = $st->{req_id}++;
+        my @props = (
+            ['metadata/icy-name',        'Station Name'],
+            ['metadata/icy-title',       'Track Title'],
+            ['metadata/icy-genre',       'Genre'],
+            ['metadata/icy-br',          'Bitrate (kbps)'],
+            ['metadata/icy-description', 'Description'],
+            ['metadata/icy-url',         'Homepage URL'],
+        );
+
+        my $has_metadata = 0;
+        for my $prop (@props) {
+            my ($key, $label) = @$prop;
+            my $value = ipc_get_property($st->{sock}, $key, $req_id++, 0.3);
+            if (defined $value && length $value) {
+                printf "  ${DIM}%-20s${RESET} %s\n", "$label:", $value;
+                $has_metadata = 1;
+            }
+        }
+        if (!$has_metadata) {
+            print "  ${DIM}(No ICY metadata available)${RESET}\n";
+        }
+        print "\n";
+    }
+
+    # Get detailed format info from ffprobe if available
+    if (system("command -v ffprobe > /dev/null 2>&1") == 0) {
+        print "${CYAN}--- Deep Stream Analysis (ffprobe) ---${RESET}\n";
+
+        my $probe = run_capture(
+            'ffprobe',
+            '-v', 'quiet',
+            '-timeout', '5000000',
+            '-show_entries', 'format:format_tags:stream',
+            '-of', 'default=noprint_wrappers=1',
+            $url,
+        );
+
+        if (defined $probe && length $probe) {
+            # Parse and display in a more readable format
+            for my $line (split /\n/, $probe) {
+                if ($line =~ /^\[(\w+)\]/) {
+                    print "${GREEN}[$1]${RESET}\n";
+                } elsif ($line =~ /^TAG:(.+)=(.+)$/) {
+                    printf "  ${DIM}%-20s${RESET} %s\n", "$1:", $2;
+                } elsif ($line =~ /^(\w+)=(.+)$/) {
+                    printf "  ${DIM}%-20s${RESET} %s\n", "$1:", $2;
+                }
+            }
+        } else {
+            print "  ${DIM}(No additional metadata available)${RESET}\n";
+        }
+        print "\n";
+    }
+
+    # Footer
+    print "${BOLD}${CYAN}";
+    print "=" x 70 . "\n";
+    print "${RESET}";
+    print "${YELLOW}Press any key to return to radio...${RESET}\n";
+
+    # Wait for any keypress (blocking read)
+    my $saved_term = tui_term_setup();  # Ensure raw mode
+    tui_read_key(undef);  # Blocking read (no timeout)
+    tui_term_restore($saved_term);
+
+    # Clear screen and return - the main loop will redraw the TUI
+    print "\e[2J\e[H";
+
+    verbose_log("TUI: Stream info displayed and dismissed");
+}
+
+# ------------------------------------------------------------------------------
 # tui_fake_freq - turn a station index into a fake AM-band frequency for the
 # display. Real AM band: 540 kHz to 1700 kHz. Just visual flavour.
 # ------------------------------------------------------------------------------
@@ -718,37 +1097,26 @@ sub centered {
     return (' ' x $left) . $s . (' ' x $right);
 }
 
-# Build the title bar (row 2): " ● ON AIR ............. RADIO TERMINAL ............. [Lo-Fi:XXX] "
+# Build the title bar (row 1): "  <centered AM_RADIO>  [Lo-Fi:XXX] "
+# The brand is centered in the available space; the Lo-Fi badge sits flush right.
 sub tui_title_row {
     my ($st) = @_;
 
-    my $dot      = $st->{pulse} ? '●' : '○';
-    my $on_air   = "$dot ON AIR";                 # 8 visible chars
-    my $brand    = 'RADIO TERMINAL';              # 14 visible chars
-    my $filter   = $st->{filter} ? '[Lo-Fi:ON ]'  # 11 visible chars (note trailing space)
-                                 : '[Lo-Fi:OFF]';
+    my $brand  = 'AM_RADIO';     # 8 visible chars
+    my $filter = $st->{filter} ? '[Lo-Fi:ON ]'   # 11 visible chars (trailing space keeps width)
+                               : '[Lo-Fi:OFF]';
 
-    # Inner width 64. Used: 1 (lead) + 8 + 14 + 11 + 1 (trail) = 35. Pad = 29. Split 14/15.
-    my $body =
-          ' ' . $on_air
-        . (' ' x 14)
-        . $brand
-        . (' ' x 15)
-        . $filter . ' ';
+    # Inner width = 64. Right segment: 11 (filter) + 1 (trailing space) = 12.
+    # Left segment: 1 (leading space). Brand field: 64 - 1 - 12 = 51 chars.
+    # centered() pads $brand symmetrically inside the 51-char field.
+    my $body = ' ' . centered($brand, 51) . $filter . ' ';
 
     # Sanity check: keeps us honest if someone tweaks a constant.
     die "title row width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
 
-    # Now colorize specific substrings. Order matters - replace longer/more
-    # specific things first so we don't double-substitute.
+    # Colorize: bold yellow branding, dim/magenta filter badge.
     my $coloured = $body;
-    if ($st->{pulse}) {
-        $coloured =~ s/●/$RED$BOLD●$RESET/;
-    } else {
-        $coloured =~ s/○/${RED}${DIM}○$RESET/;
-    }
-    $coloured =~ s/ON AIR/${RED}${BOLD}ON AIR$RESET/;
-    $coloured =~ s/RADIO TERMINAL/$BOLD${YELLOW}RADIO TERMINAL$RESET/;
+    $coloured =~ s/AM_RADIO/${BOLD}${YELLOW}AM_RADIO$RESET/;
     if ($st->{filter}) {
         $coloured =~ s/\Q[Lo-Fi:ON ]/$MAGENTA${BOLD}[Lo-Fi:ON ]$RESET/;
     } else {
@@ -925,17 +1293,12 @@ sub tui_dial_label_row {
     return $coloured;
 }
 
-# Signal meter: 10 cells, filled according to $st->{signal} (0..10).
-# Block characters used: ▰ (filled), ▱ (empty).
+# Preset buttons: 1..min(9, n_stations), current station highlighted in brackets.
+# The signal meter has been removed; only presets are shown, centered.
 sub tui_status_row {
     my ($st) = @_;
 
-    my $sig = $st->{signal};
-    $sig = 0  if $sig < 0;
-    $sig = 10 if $sig > 10;
-    my $bar = ('▰' x $sig) . ('▱' x (10 - $sig));
-
-    # Presets: 1..min(9, n_stations). Highlight the current one.
+    # Build the preset button strip. The active station shows as [N], others as " N ".
     my $n = scalar @{ $st->{stations} };
     my $max_preset = $n > 9 ? 9 : $n;
     my @cells;
@@ -944,21 +1307,12 @@ sub tui_status_row {
     }
     my $presets = join('', @cells);
 
-    # Compose. Inner width 64. We'll pad at the end.
-    my $left  = "   SIGNAL $bar";                # "   " + "SIGNAL " + 10 cells = 3+7+10 = 20
-    my $right = "PRESETS $presets";              # "PRESETS " + cells
-    my $gap   = $TUI_INNER - length($left) - length($right);
-    $gap = 1 if $gap < 1;
-    my $body = $left . (' ' x $gap) . $right;
-    $body = pad_to($body, $TUI_INNER);
+    # Center the entire "PRESETS N N …" block inside the 64-char inner width.
+    my $body = pad_to(centered("PRESETS  $presets", $TUI_INNER), $TUI_INNER);
 
     my $coloured = $body;
-    # Color the filled cells green-ish, empty cells dim
-    $coloured =~ s/(▰+)/$GREEN$1$RESET/g;
-    $coloured =~ s/(▱+)/$DIM$1$RESET/g;
-    $coloured =~ s/SIGNAL/${BOLD}SIGNAL$RESET/;
     $coloured =~ s/PRESETS/${BOLD}PRESETS$RESET/;
-    # Highlight the [N] active preset
+    # Highlight the active preset with yellow bold brackets
     $coloured =~ s/\[(\d)\]/${YELLOW}${BOLD}[$1]$RESET/g;
     return $coloured;
 }
@@ -977,12 +1331,12 @@ sub tui_msg_row {
     return $coloured;
 }
 
-# Footer / help line
+# Footer / help line — one-line summary of all key bindings
 sub tui_help_row {
-    my $body = '  ◀ ▶ tune    1-9 preset    o filter    r retune    q quit  ';
+    my $body = '  ◀ ▶ tune   1-9 preset   o lo-fi   i info   r retune   f find   q quit  ';
     $body = pad_to($body, $TUI_INNER);
     my $coloured = $body;
-    $coloured =~ s/(◀ ▶|1-9|o|r|q)/${CYAN}$1$RESET/g;
+    $coloured =~ s/(◀ ▶|1-9|o|i|r|f|q)/${CYAN}$1$RESET/g;
     return $coloured;
 }
 
@@ -992,49 +1346,335 @@ sub tui_blank_row {
 }
 
 # ------------------------------------------------------------------------------
-# tui_draw - assemble all the rows and dump them to the screen in one go.
-# We move the cursor to the top-left, then for each row print the row body
-# wrapped in left/right border chars and an explicit ESC[K to clear any
-# leftover characters past our right border (handles terminal resizes
-# or stale output gracefully).
+# tui_search_help_row - key-binding bar shown at the bottom while in search mode.
+# Replaces the normal tui_help_row when $st->{search_mode} is active.
+# ------------------------------------------------------------------------------
+sub tui_search_help_row {
+    my ($mode) = @_;
+    my $body = $mode == 1
+        ? '  Enter=search    1-9 tune & save    Esc=cancel'
+        : '  1-9 tune & save    Esc=cancel';
+    $body = pad_to($body, $TUI_INNER);
+    my $coloured = $body;
+    $coloured =~ s/(Enter|1-9|Esc)/${CYAN}$1$RESET/g;
+    return $coloured;
+}
+
+# ------------------------------------------------------------------------------
+# tui_search_content_rows - returns the 15 inner content rows (rows 3-17) that
+# replace the normal station/dial layout while search mode is active.
+#
+# Row mapping:
+#   0 (row 3)  blank
+#   1 (row 4)  card top border
+#   2 (row 5)  search prompt card row  ("Search: [query]_")
+#   3 (row 6)  card bottom border
+#   4 (row 7)  blank
+#   5 (row 8)  status/instruction line
+#   6-10       up to 5 search result rows  (blank if slot is empty)
+#   11(row 14) blank
+#   12(row 15) preset buttons (unchanged — music keeps playing)
+#   13(row 16) blank
+#   14(row 17) transient message row
+# ------------------------------------------------------------------------------
+sub tui_search_content_rows {
+    my ($st) = @_;
+
+    my $mode    = $st->{search_mode};
+    my $query   = $st->{search_query} // '';
+    my @results = @{ $st->{search_results} // [] };
+    my $page    = $st->{search_page} // 0;
+
+    # ---- Search prompt card row ------------------------------------------
+    # The card is 60 chars wide (3-space margin + │ + 58 content + │ + space).
+    my $inner_card  = 58;
+    my $label       = 'Search: ';                          # 8 visible chars
+    my $max_q_w     = $inner_card - length($label) - 1;   # reserve 1 for cursor '_'
+    my $q_display   = truncate_to($query, $max_q_w);
+    my $cursor      = $mode == 1 ? '_' : ' ';             # blinking cursor in typing state
+    my $prompt_inner = pad_to($label . $q_display . $cursor, $inner_card);
+
+    # Colorize the prompt: cyan label, bold cursor
+    my $prompt_colored = $prompt_inner;
+    $prompt_colored =~ s/Search:/${CYAN}Search:$RESET/;
+    $prompt_colored =~ s/_$/${BOLD}_$RESET/ if $mode == 1;
+
+    # Wrap the prompt in card borders (same style as tui_card_top/bot)
+    my $card_row = '   ' . "${CYAN}│$RESET" . $prompt_colored . "${CYAN}│$RESET" . ' ';
+
+    # ---- Status / instruction line ----------------------------------------
+    my $status_text;
+    if ($mode == 1) {
+        $status_text = length($query)
+            ? "   Press Enter to search for \"$query\""
+            : '   Type a station name and press Enter to search';
+    } else {
+        my $n = scalar @results;
+        if ($n > 0) {
+            my $total_pages = int(($n - 1) / 5) + 1;
+            my $current_page = $page + 1;
+            my $start_idx = $page * 5 + 1;
+            my $end_idx = ($page + 1) * 5;
+            $end_idx = $n if $end_idx > $n;
+
+            $status_text = sprintf('   %d results (page %d/%d, showing %d-%d) — press 1-5 to tune',
+                                   $n, $current_page, $total_pages, $start_idx, $end_idx);
+            $status_text .= ', n/p for next/prev' if $total_pages > 1;
+        } else {
+            $status_text = '   No stations found. Try a different query.';
+        }
+    }
+    my $status = pad_to($status_text, $TUI_INNER);
+    # Highlight key hints if present
+    (my $status_colored = $status) =~ s/(1-\d+|n\/p)/${CYAN}$1$RESET/g;
+
+    # ---- Result rows (5 slots) -------------------------------------------
+    # Each result row: "   N) <name padded to fill>  NNN kbps"
+    my @result_rows;
+    my $page_start = $page * 5;
+    for my $i (0 .. 4) {
+        my $result_idx = $page_start + $i;
+        my $r = $result_idx < @results ? $results[$result_idx] : undef;
+
+        if (defined $r) {
+            my $num_str = sprintf '%d) ', $i + 1;          # "N) " = 3 chars
+            my $bitrate = $r->{bitrate}
+                ? sprintf('%3d kbps', $r->{bitrate})       # "NNN kbps" = 8 chars
+                : '        ';                               # 8 spaces when unknown
+            my $prefix  = '   ' . $num_str;                # "   N) " = 6 chars
+            my $suffix  = '  ' . $bitrate;                 # "  NNN kbps" = 10 chars
+            my $name_w  = $TUI_INNER - length($prefix) - length($suffix);
+            my $name_t  = truncate_to($r->{name} // '', $name_w);
+            my $body    = $prefix . pad_to($name_t, $name_w) . $suffix;
+            $body       = pad_to($body, $TUI_INNER);
+
+            my $colored = $body;
+            $colored =~ s/^(\s+\d+\) )/${CYAN}$1$RESET/;  # cyan result number
+            $colored =~ s/(\d+ kbps)/$YELLOW$1$RESET/;    # yellow bitrate
+            push @result_rows, $colored;
+        } else {
+            push @result_rows, tui_blank_row();            # empty slot
+        }
+    }
+
+    # ---- Assemble and return 15 content rows (rows 3-17) -----------------
+    return (
+        tui_blank_row(),       # row 3:  blank padding before the card
+        tui_card_top(),        # row 4:  ┌──────────────────────────────────┐
+        $card_row,             # row 5:  │ Search: [query]_                 │
+        tui_card_bot(),        # row 6:  └──────────────────────────────────┘
+        tui_blank_row(),       # row 7:  blank
+        $status_colored,       # row 8:  instructions / result count / page info
+        @result_rows,          # rows 9-13: up to 5 search results (or blanks)
+        tui_blank_row(),       # row 14: blank
+        tui_status_row($st),   # row 15: preset buttons (unchanged during search)
+        tui_blank_row(),       # row 16: blank
+        tui_msg_row($st),      # row 17: transient messages ("Searching…" etc.)
+    );
+}
+
+
+# ------------------------------------------------------------------------------
+# tui_draw - assemble all rows and flush them to the screen in one pass.
+#
+# Every content row is exactly $TUI_INNER (64) visible characters wide; the
+# outer border glyphs (║, ╔, ╚ …) are added here as the array is built.
+# The cursor is moved to the top-left corner (ESC[H) before printing so the
+# entire panel is redrawn in-place rather than scrolling.  ESC[K at the end
+# of each line clears any leftover characters from a wider previous frame.
 # ------------------------------------------------------------------------------
 sub tui_draw {
     my ($st) = @_;
 
-    # Top border + title bar + divider
+    # Assemble all 21 rows (indices 0-20) into an array.  In search mode the
+    # content rows (3-17) and the help row (19) are swapped out below.
     my @rows = (
+        # Row 0: Top outer border spanning the full TUI_WIDTH (66 columns)
         "${CYAN}╔" . ('═' x $TUI_INNER) . "╗${RESET}",
-        "${CYAN}║${RESET}" . tui_title_row($st)    . "${CYAN}║${RESET}",
+
+        # Row 1: Title bar — AM_RADIO branding centred, Lo-Fi badge on the right
+        "${CYAN}║${RESET}" . tui_title_row($st)        . "${CYAN}║${RESET}",
+
+        # Row 2: Horizontal divider between the title and the content area
         "${CYAN}╠" . ('═' x $TUI_INNER) . "╣${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_card_top()        . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_info_row1($st)    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_info_row2($st)    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_card_bot()        . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
+
+        # Row 3: Blank padding row at the top of the content area
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 4: Top edge of the station-info card (┌───┐)
+        "${CYAN}║${RESET}" . tui_card_top()             . "${CYAN}║${RESET}",
+
+        # Row 5: Station name and its fake AM frequency inside the card
+        "${CYAN}║${RESET}" . tui_info_row1($st)         . "${CYAN}║${RESET}",
+
+        # Row 6: Current track title (or "tuning in…" placeholder) inside the card
+        "${CYAN}║${RESET}" . tui_info_row2($st)         . "${CYAN}║${RESET}",
+
+        # Row 7: Bottom edge of the station-info card (└───┘)
+        "${CYAN}║${RESET}" . tui_card_bot()             . "${CYAN}║${RESET}",
+
+        # Row 8: Blank row separating the card from the frequency dial section
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 9: "FREQUENCY" section label
         "${CYAN}║${RESET}" . pad_to('   FREQUENCY', $TUI_INNER) . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_needle_row($st) . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_line_row()    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_tick_row($st) . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_dial_label_row()   . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_status_row($st)    . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_blank_row()       . "${CYAN}║${RESET}",
-        "${CYAN}║${RESET}" . tui_msg_row($st)       . "${CYAN}║${RESET}",
+
+        # Row 10: Dial needle (▼) positioned proportionally for the current station
+        "${CYAN}║${RESET}" . tui_dial_needle_row($st)   . "${CYAN}║${RESET}",
+
+        # Row 11: Horizontal dial track (━━━━━━━━━━━━)
+        "${CYAN}║${RESET}" . tui_dial_line_row()        . "${CYAN}║${RESET}",
+
+        # Row 12: Tick marks — dim for unselected stations, bold for current
+        "${CYAN}║${RESET}" . tui_dial_tick_row($st)     . "${CYAN}║${RESET}",
+
+        # Row 13: Frequency labels (540 – 1700 kHz) with "kHz" unit on the right
+        "${CYAN}║${RESET}" . tui_dial_label_row()       . "${CYAN}║${RESET}",
+
+        # Row 14: Blank row between the dial and the preset buttons
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 15: Preset buttons 1-9; the active station is highlighted as [N]
+        "${CYAN}║${RESET}" . tui_status_row($st)        . "${CYAN}║${RESET}",
+
+        # Row 16: Blank row between presets and the transient message line
+        "${CYAN}║${RESET}" . tui_blank_row()            . "${CYAN}║${RESET}",
+
+        # Row 17: Transient message row ("Tuning…", "Lo-Fi ON", etc.)
+        "${CYAN}║${RESET}" . tui_msg_row($st)           . "${CYAN}║${RESET}",
+
+        # Row 18: Horizontal divider between the content area and the help row
         "${CYAN}╠" . ('═' x $TUI_INNER) . "╣${RESET}",
-        "${CYAN}║${RESET}" . tui_help_row()        . "${CYAN}║${RESET}",
+
+        # Row 19: Key-binding summary — one line listing all available commands
+        "${CYAN}║${RESET}" . tui_help_row()             . "${CYAN}║${RESET}",
+
+        # Row 20: Bottom outer border
         "${CYAN}╚" . ('═' x $TUI_INNER) . "╝${RESET}",
     );
 
-    # Move cursor to home and print each row, clearing to end of line on the way
+    # In search mode, overlay the content area (rows 3-17) with the search UI
+    # and replace the help row (19) with search-specific key bindings.
+    # The outer borders (0-2, 18, 20) and the title (1) are unchanged.
+    if ($st->{search_mode}) {
+        my @content = tui_search_content_rows($st);
+        for my $i (0 .. $#content) {
+            $rows[3 + $i] = "${CYAN}║${RESET}" . $content[$i] . "${CYAN}║${RESET}";
+        }
+        $rows[19] = "${CYAN}║${RESET}" . tui_search_help_row($st->{search_mode})
+                  . "${CYAN}║${RESET}";
+    }
+
+    # Move the cursor to the top-left corner (home position) and redraw every
+    # row in sequence.  ESC[K erases to end of line so any characters from a
+    # wider previous frame or a terminal resize artefact are cleaned up.
     print "\e[H";
     for my $row (@rows) {
         print $row, "\e[K\n";
     }
-    # Flush the remainder of the screen below us. \e[J clears from cursor to
-    # bottom; useful when we shrink or the previous frame had stuff below.
+    # ESC[J clears from the cursor to the bottom of the screen.  This removes
+    # any content that was below our TUI (e.g. from a previous taller layout
+    # or text that was on screen before we entered alternate-screen mode).
     print "\e[J";
 }
+
+# ------------------------------------------------------------------------------
+# tui_do_search - call the Radio-Browser.info API and populate search results.
+#
+# This is a blocking network call (curl).  The music keeps playing because mpv
+# runs as a separate child process and is not affected by the parent blocking.
+# We redraw the TUI with a "Searching…" message before the call so the user
+# gets feedback immediately rather than staring at a frozen screen.
+# ------------------------------------------------------------------------------
+sub tui_do_search {
+    my ($st) = @_;
+    my $query = $st->{search_query} // '';
+    return unless length $query;
+
+    # Show a "Searching…" message and flush to the terminal before we block.
+    $st->{msg}       = 'Searching…';
+    $st->{msg_until} = time() + 30;
+    tui_draw($st);
+
+    my $api_url = 'https://de1.api.radio-browser.info/json/stations/search'
+                . '?name=' . uri_escape($query)
+                . '&limit=50&hidebroken=true&order=votes&reverse=true';
+
+    # run_capture uses list-form exec so the query string can never be
+    # misinterpreted as shell code even if it contains metacharacters.
+    my $response = run_capture('curl', '-sL', '--max-time', '8', $api_url);
+    my $data     = eval { decode_json($response // '') };
+
+    if ($@ || ref($data) ne 'ARRAY') {
+        $st->{search_results} = [];
+        $st->{msg}            = 'Search failed — check network connection';
+        $st->{msg_until}      = time() + 3;
+    } else {
+        # Normalise into a plain list of {name, url, bitrate} hashes.
+        $st->{search_results} = [
+            map { {
+                name    => $_->{name}    // '',
+                url     => $_->{url}     // '',
+                bitrate => $_->{bitrate} // 0,
+            } }
+            @$data
+        ];
+        my $n = scalar @{ $st->{search_results} };
+        $st->{msg}       = $n ? "Found $n match(es)" : 'No stations found';
+        $st->{msg_until} = time() + 2;
+    }
+
+    # Advance to results-display state so the user can pick a station.
+    # Reset to first page of results.
+    $st->{search_mode} = 2;
+    $st->{search_page} = 0;
+}
+
+# ------------------------------------------------------------------------------
+# tui_search_select - save a search result to ~/.radio_stations and tune mpv
+# to it without stopping playback of the current stream first.
+# ------------------------------------------------------------------------------
+sub tui_search_select {
+    my ($st, $n) = @_;   # $n is 1-based choice from the result list (1-5)
+    my @results = @{ $st->{search_results} // [] };
+    my $page    = $st->{search_page} // 0;
+
+    # Calculate actual index based on current page
+    my $idx = ($page * 5) + $n - 1;
+    return if $idx < 0 || $idx >= @results;
+
+    my $r    = $results[$idx];
+    my $name = $r->{name} // '';
+    my $url  = $r->{url}  // '';
+    return unless length $name && length $url;
+
+    # Strip any embedded newlines that a malformed API response might carry;
+    # the config file format uses one "Name::URL" entry per line.
+    $name =~ s/[\r\n]+/ /g;
+    $url  =~ s/[\r\n]+//g;
+
+    # Persist the chosen station so it appears in future sessions.
+    if (open(my $fh, '>>', $CONFIG_FILE)) {
+        print $fh $name . '::' . $url . "\n";
+        close $fh;
+    }
+
+    # Hot-add the station to the in-memory list and switch mpv to it.
+    push @STATIONS, $name . '::' . $url;
+    $st->{stations} = \@STATIONS;
+    $st->{current}  = $#STATIONS;
+    tui_stop_mpv($st);
+    tui_start_mpv($st);
+    $st->{msg}       = 'Tuning to ' . truncate_to($name, 30);
+    $st->{msg_until} = time() + 2;
+
+    # Clear search state and return to normal playback view.
+    $st->{search_mode}    = 0;
+    $st->{search_query}   = '';
+    $st->{search_results} = [];
+}
+
+
 
 # ------------------------------------------------------------------------------
 # radio_tui - main TUI driver.
@@ -1047,7 +1687,8 @@ sub radio_tui {
         return;
     }
 
-    # Make sure the terminal is big enough for our drawing.
+    # Record the initial terminal size.  The startup check is strict (exit if
+    # too small); subsequent resize handling is done in the event loop.
     my ($rows, $cols) = tui_term_size();
     if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
         print STDERR "${YELLOW}Terminal is ${cols}x${rows}; need at least ${TUI_WIDTH}x${TUI_HEIGHT}.${RESET}\n";
@@ -1055,26 +1696,28 @@ sub radio_tui {
     }
 
     my %st = (
-        stations   => \@STATIONS,
-        current    => ($initial_idx // 0),
-        track      => '',
-        filter     => $initial_filter ? 1 : 0,
-        signal     => 8,
-        pulse      => 0,
-        mpv_pid    => undef,
-        sock       => "/tmp/am_radio_tui_$$.sock",
-        last_poll  => 0,
-        last_anim  => 0,
-        msg        => '',
-        msg_until  => 0,
-        tune_start => 0,
-        req_id     => 1,
+        stations      => \@STATIONS,
+        current       => ($initial_idx // 0),
+        track         => '',
+        filter        => $initial_filter ? 1 : 0,
+        mpv_pid       => undef,
+        sock          => "/tmp/am_radio_tui_$$.sock",
+        last_poll     => 0,
+        msg           => '',
+        msg_until     => 0,
+        tune_start    => 0,
+        req_id        => 1,
+        # Search mode state (see tui_do_search / tui_search_select)
+        search_mode    => 0,   # 0=off  1=typing query  2=showing results
+        search_query   => '',
+        search_results => [],
+        search_page    => 0,   # current page of results (5 results per page)
     );
 
     my $saved_term = tui_term_setup();
 
-    # Enter alternate screen buffer (saves the user's existing terminal
-    # contents) and hide the cursor for the duration of the TUI.
+    # Enter the alternate screen buffer so we don't clobber the user's
+    # scrollback, then hide the cursor for cleaner drawing.
     print "\e[?1049h\e[?25l\e[2J\e[H";
 
     # Cleanup is idempotent (a flag prevents double-cleanup) and used by
@@ -1090,32 +1733,100 @@ sub radio_tui {
     local $SIG{TERM} = sub { $cleanup->(); exit 143; };
     local $SIG{HUP}  = sub { $cleanup->(); exit 129; };
 
+    # SIGWINCH fires whenever the terminal window is resized.  We set a flag
+    # here (signal-safe) and re-check terminal dimensions in the event loop.
+    my $need_resize = 0;
+    local $SIG{WINCH} = sub { $need_resize = 1; };
+
     tui_start_mpv(\%st);
     $st{msg}       = 'Tuning…';
     $st{msg_until} = time() + 1.5;
 
     # ---- main event loop --------------------------------------------------
-    # ~10 Hz redraw; key reads use a 50ms select timeout so the loop is
-    # snappy without being a busy-wait. Per-iteration tasks:
-    #   * read keystroke (non-blocking)
-    #   * if 1.5s since last poll, re-fetch the ICY title from mpv
-    #   * if 0.2s since last animation frame, jiggle the signal meter
-    #     and toggle the ON AIR pulse
-    #   * redraw the whole panel
+    # Runs at roughly 20 Hz (tui_read_key blocks for up to 50ms per pass).
+    # Each iteration:
+    #   1. Handle terminal resize if SIGWINCH was received.
+    #   2. Read a keystroke (non-blocking, 50ms timeout).
+    #   3. If 1.5s have elapsed, re-fetch the ICY track title from mpv.
+    #   4. Redraw the full panel.
     while (1) {
+
+        # ---- Terminal resize handling -------------------------------------
+        # On SIGWINCH, re-measure the terminal.  The stored $rows/$cols keep
+        # their previous values until a new SIGWINCH triggers a fresh read,
+        # so the too-small check below keeps firing (without extra stty calls)
+        # until the user grows the window and SIGWINCH fires again.
+        if ($need_resize) {
+            $need_resize = 0;
+            ($rows, $cols) = tui_term_size();
+        }
+        if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
+            print "\e[2J\e[H";
+            printf "${YELLOW}Terminal too small (%dx%d) — resize to at least %dx%d.${RESET}\n",
+                   $cols, $rows, $TUI_WIDTH, $TUI_HEIGHT;
+            print "Resize the terminal window to continue...\n";
+            sleep 0.3;
+            next;
+        }
+
+        # ---- Key handling ------------------------------------------------
         if (defined(my $key = tui_read_key(0.05))) {
-            if    ($key eq 'q' || $key eq 'Q' || $key eq 'esc')  { last }
-            elsif ($key eq 'right' || $key eq 'n' || $key eq 'N'){ tui_change(\%st, +1) }
-            elsif ($key eq 'left'  || $key eq 'p' || $key eq 'P'){ tui_change(\%st, -1) }
-            elsif ($key =~ /^[1-9]$/)                            { tui_jump(\%st, $key - 1) }
-            elsif ($key eq 'o' || $key eq 'O')                   { tui_toggle_filter(\%st) }
-            elsif ($key eq 'r' || $key eq 'R')                   { tui_retune(\%st) }
+
+            if ($st{search_mode}) {
+                # -- Search mode --
+                if ($key eq 'esc') {
+                    # Cancel search and return to normal playback view
+                    $st{search_mode}    = 0;
+                    $st{search_query}   = '';
+                    $st{search_results} = [];
+                    $st{search_page}    = 0;
+                } elsif ($st{search_mode} == 2 && $key =~ /^[1-5]$/) {
+                    # Result selection: save station and switch mpv to it
+                    tui_search_select(\%st, int($key));
+                } elsif ($st{search_mode} == 2 && ($key eq 'n' || $key eq 'N')) {
+                    # Next page
+                    my @results = @{ $st{search_results} // [] };
+                    my $total_pages = int((scalar(@results) - 1) / 5) + 1;
+                    $st{search_page} = ($st{search_page} + 1) % $total_pages if $total_pages > 1;
+                } elsif ($st{search_mode} == 2 && ($key eq 'p' || $key eq 'P')) {
+                    # Previous page
+                    my @results = @{ $st{search_results} // [] };
+                    my $total_pages = int((scalar(@results) - 1) / 5) + 1;
+                    $st{search_page} = ($st{search_page} - 1 + $total_pages) % $total_pages if $total_pages > 1;
+                } elsif ($st{search_mode} == 1) {
+                    if ($key eq "\n" || $key eq "\r") {
+                        # Enter: run the blocking API search (handle both Unix \n and Windows \r)
+                        tui_do_search(\%st);
+                    } elsif ($key eq "\x7f" || $key eq "\x08") {
+                        # Backspace / Delete: remove last character of query
+                        $st{search_query} =~ s/.$//s;
+                    } elsif (length($key) == 1 && $key =~ /[ -~]/) {
+                        # Printable ASCII: accumulate into the search string
+                        $st{search_query} .= $key;
+                    }
+                }
+            } else {
+                # -- Normal playback mode --
+                if    ($key eq 'q' || $key eq 'Q' || $key eq 'esc')   { last }
+                elsif ($key eq 'right' || $key eq 'n' || $key eq 'N') { tui_change(\%st, +1) }
+                elsif ($key eq 'left'  || $key eq 'p' || $key eq 'P') { tui_change(\%st, -1) }
+                elsif ($key =~ /^[1-9]$/)                             { tui_jump(\%st, $key - 1) }
+                elsif ($key eq 'o' || $key eq 'O')                    { tui_toggle_filter(\%st) }
+                elsif ($key eq 'r' || $key eq 'R')                    { tui_retune(\%st) }
+                elsif ($key eq 'i' || $key eq 'I')                    { tui_dump_stream_info(\%st) }
+                elsif ($key eq 'f' || $key eq '/')                    {
+                    # Enter search mode — music is uninterrupted
+                    $st{search_mode}    = 1;
+                    $st{search_query}   = '';
+                    $st{search_results} = [];
+                }
+            }
         }
 
         my $now = time();
 
         # Reap mpv if it died on its own (network drop, decoder crash, etc.)
-        # so we don't keep showing stale state.
+        # so we don't keep showing stale track info.
         if ($st{mpv_pid} && waitpid($st{mpv_pid}, WNOHANG) == $st{mpv_pid}) {
             verbose_log("TUI: mpv process died unexpectedly (possible stream drop/crash)");
             $st{mpv_pid}   = undef;
@@ -1123,7 +1834,9 @@ sub radio_tui {
             $st{msg_until} = $now + 5;
         }
 
-        if ($now - $st{last_poll} >= 1.5 && $st{mpv_pid}) {
+        # Poll the ICY title from mpv every 1.5s.  We skip polling while in
+        # search mode to avoid contending with the blocking search call.
+        if ($now - $st{last_poll} >= 1.5 && $st{mpv_pid} && !$st{search_mode}) {
             my $t = tui_query_track(\%st);
             if (defined $t && $t ne $st{track}) {
                 verbose_log("TUI: Track changed to: $t");
@@ -1132,21 +1845,67 @@ sub radio_tui {
             $st{last_poll} = $now;
         }
 
-        if ($now - $st{last_anim} >= 0.2) {
-            # Slight random walk so the meter feels alive but doesn't strobe.
-            my $delta = int(rand(3)) - 1;          # -1, 0, or +1
-            $st{signal} += $delta;
-            $st{signal} = 6  if $st{signal} < 6;
-            $st{signal} = 10 if $st{signal} > 10;
-            $st{pulse}  = $st{pulse} ? 0 : 1;
-            $st{last_anim} = $now;
-        }
-
         tui_draw(\%st);
     }
 
     $cleanup->();
 }
+
+
+# ------------------------------------------------------------------------------
+# load_afn_stations - Replace the current station list with American Forces
+# Network (AFN) streaming stations. AFN provides radio and TV programming to
+# U.S. military personnel and their families stationed around the world.
+#
+# This preset includes AFN stations from various global locations:
+#   - AFN Pacific (Tokyo, Humphreys Korea)
+#   - AFN Europe (Germany, Italy, Belgium, Bahrain)
+#   - AFN locations (Guantanamo Bay, Turkey)
+#
+# Stream URLs are sourced from Radio-Browser.info verified working endpoints.
+# All streams tested and confirmed operational as of January 2026.
+# ------------------------------------------------------------------------------
+sub load_afn_stations {
+    print "${CYAN}Loading American Forces Network (AFN) stations...${RESET}\n";
+
+    # Clear existing stations and load AFN presets
+    @STATIONS = ();
+
+    # AFN GO Tokyo (Japan) - 96 kbps MP3, 192 votes
+    push @STATIONS, 'AFN GO Tokyo::http://22963.live.streamtheworld.com/AFNP_TKO_SC';
+
+    # AFN 360 Guantanamo Bay (Cuba) - 96 kbps MP3, 1745 votes
+    push @STATIONS, 'AFN 360 Guantanamo Bay::http://27783.live.streamtheworld.com:3690/AFNE_GMO_SC';
+
+    # AFN GO Humphreys The Eagle (South Korea) - 32 kbps AAC+, 6 votes
+    push @STATIONS, 'AFN GO Humphreys The Eagle::http://14993.live.streamtheworld.com/AFNP_OSNAAC_SC';
+
+    # AFN 360 Bahrain (Bahrain) - 96 kbps MP3, 972 votes
+    push @STATIONS, 'AFN 360 Bahrain::http://27863.live.streamtheworld.com/AFNE_BHN_SC';
+
+    # AFN 360 Benelux (Belgium) - 96 kbps MP3, 31 votes
+    push @STATIONS, 'AFN 360 Benelux::http://28993.live.streamtheworld.com:3690/AFNE_BLX_SC';
+
+    # AFN İncirlik (Turkey) - 96 kbps MP3
+    push @STATIONS, 'AFN İncirlik::https://playerservices.streamtheworld.com/api/livestream-redirect/AFNE_ICK.mp3';
+
+    # AFN 360 Bavaria (Germany) - 96 kbps MP3, 102 votes
+    push @STATIONS, 'AFN 360 Bavaria::http://28563.live.streamtheworld.com/AFNE_BAV_SC';
+
+    # AFN 360 Vicenza (Italy) - 96 kbps MP3, 43 votes
+    push @STATIONS, 'AFN 360 Vicenza::http://23543.live.streamtheworld.com/AFNE_VIC_SC';
+
+    # AFN 360 Wiesbaden (Germany) - 96 kbps MP3, 130 votes
+    push @STATIONS, 'AFN 360 Wiesbaden::http://25453.live.streamtheworld.com:3690/AFNE_WBN_SC';
+
+    # AFN GO Bahrain (Bahrain) - 32 kbps AAC+, 306 votes
+    push @STATIONS, 'AFN GO Bahrain::https://playerservices.streamtheworld.com/api/livestream-redirect/AFNE_BHNAAC.aac';
+
+    my $count = scalar @STATIONS;
+    print "${GREEN}Loaded $count AFN radio stations.${RESET}\n";
+    print "${DIM}American Forces Network - Serving U.S. military worldwide${RESET}\n\n";
+}
+
 
 # ==============================================================================
 # ARGUMENT PARSING
@@ -1156,6 +1915,16 @@ my $STATION_CHOICE   = '';
 my $FILTER_OLD_RADIO = 0;
 my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
+my $AFN_MODE         = 0;
+
+# Check for --afn long option in ARGV before getopts processes anything
+# This must happen before getopts because getopts doesn't handle long options
+for my $i (reverse 0 .. $#ARGV) {
+    if ($ARGV[$i] eq '--afn') {
+        $AFN_MODE = 1;
+        splice(@ARGV, $i, 1);  # Remove --afn from ARGV
+    }
+}
 
 my %opts;
 unless (getopts('s:f:loithv', \%opts)) {
@@ -1164,6 +1933,11 @@ unless (getopts('s:f:loithv', \%opts)) {
 }
 
 show_help() if $opts{h};
+
+# If AFN mode is enabled, load AFN stations instead of the config file
+if ($AFN_MODE) {
+    load_afn_stations();
+}
 
 if ($opts{l}) {
     list_stations();
