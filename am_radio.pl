@@ -131,6 +131,14 @@ ${BOLD}Special station presets:${RESET}
              from Guantanamo Bay, Bahrain, Benelux, Bavaria, Vicenza,
              Wiesbaden, and AFN İncirlik (Turkey)
 
+${BOLD}TUI window:${RESET}
+  --resize   Ask the terminal emulator to resize itself to the exact
+             dimensions of the AM_RADIO TUI (66x22) on launch, then
+             restore the previous size on exit. Uses the xterm
+             CSI 8 t escape sequence; requires a terminal emulator
+             that honors it (xterm, iTerm2, foot, kitty, most
+             VTE-based terminals). Only meaningful with -t.
+
 ${BOLD}Discovery examples:${RESET}
   $name -f                     # Interactive menu (by country, region, tag, etc.)
   $name -f 'jazz'              # Quick search for stations with 'jazz' in name
@@ -802,6 +810,23 @@ sub tui_term_size {
     chomp $size;
     my ($rows, $cols) = split /\s+/, $size;
     return ($rows || 24, $cols || 80);
+}
+
+# ------------------------------------------------------------------------------
+# tui_request_term_resize - ask the terminal emulator to resize its window
+# to the given (rows, cols) using the xterm "CSI 8 ; rows ; cols t" sequence.
+# This is honored by xterm, iTerm2, foot, kitty, and most VTE-based terminals;
+# terminals that don't implement it (notably macOS Terminal.app and tmux by
+# default) will simply ignore the bytes.
+#
+# We use printf-on-STDOUT and immediately flush so the escape lands before any
+# subsequent draw. Caller is responsible for waiting for the resize to settle
+# (a short sleep + re-measuring via tui_term_size works well in practice).
+# ------------------------------------------------------------------------------
+sub tui_request_term_resize {
+    my ($rows, $cols) = @_;
+    local $| = 1;
+    printf STDOUT "\e[8;%d;%dt", $rows, $cols;
 }
 
 # ------------------------------------------------------------------------------
@@ -1690,6 +1715,25 @@ sub radio_tui {
     # Record the initial terminal size.  The startup check is strict (exit if
     # too small); subsequent resize handling is done in the event loop.
     my ($rows, $cols) = tui_term_size();
+
+    # --resize: ask the terminal emulator to size itself to the AM_RADIO
+    # panel dimensions, then re-measure. We stash the pre-resize dimensions
+    # so the cleanup path can restore them on exit. If the terminal doesn't
+    # honor CSI 8 t, re-measuring just yields the original size and the
+    # below "too small" check will still fire as it would have without --resize.
+    my $orig_rows = $rows;
+    my $orig_cols = $cols;
+    my $did_resize = 0;
+    if ($main::RESIZE_TERM) {
+        tui_request_term_resize($TUI_HEIGHT, $TUI_WIDTH);
+        # Give the window manager a beat to perform the resize and for
+        # SIGWINCH to settle before we re-query. 150ms is enough on every
+        # terminal I tested and imperceptible to the user.
+        select(undef, undef, undef, 0.15);
+        ($rows, $cols) = tui_term_size();
+        $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+    }
+
     if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
         print STDERR "${YELLOW}Terminal is ${cols}x${rows}; need at least ${TUI_WIDTH}x${TUI_HEIGHT}.${RESET}\n";
         exit 1;
@@ -1728,6 +1772,9 @@ sub radio_tui {
         tui_stop_mpv(\%st);
         tui_term_restore($saved_term);
         print "\e[?25h\e[?1049l";                 # show cursor, leave alt screen
+        # If --resize moved the window, put it back where we found it so
+        # the user's terminal isn't left at AM_RADIO dimensions afterwards.
+        tui_request_term_resize($orig_rows, $orig_cols) if $did_resize;
     };
     local $SIG{INT}  = sub { $cleanup->(); exit 130; };
     local $SIG{TERM} = sub { $cleanup->(); exit 143; };
@@ -1916,13 +1963,18 @@ my $FILTER_OLD_RADIO = 0;
 my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
 my $AFN_MODE         = 0;
+our $RESIZE_TERM     = 0;
 
-# Check for --afn long option in ARGV before getopts processes anything
-# This must happen before getopts because getopts doesn't handle long options
+# Strip long options from ARGV before getopts runs (getopts only handles short
+# options). Keep the list small and explicit so we don't accidentally swallow
+# anything that looks long-option-ish.
 for my $i (reverse 0 .. $#ARGV) {
     if ($ARGV[$i] eq '--afn') {
         $AFN_MODE = 1;
-        splice(@ARGV, $i, 1);  # Remove --afn from ARGV
+        splice(@ARGV, $i, 1);
+    } elsif ($ARGV[$i] eq '--resize') {
+        $RESIZE_TERM = 1;
+        splice(@ARGV, $i, 1);
     }
 }
 
