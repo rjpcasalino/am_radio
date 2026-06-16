@@ -1131,10 +1131,10 @@ sub tui_title_row {
     my $filter = $st->{filter} ? '[Lo-Fi:ON ]'   # 11 visible chars (trailing space keeps width)
                                : '[Lo-Fi:OFF]';
 
-    # Inner width = 64. Right segment: 11 (filter) + 1 (trailing space) = 12.
-    # Left segment: 1 (leading space). Brand field: 64 - 1 - 12 = 51 chars.
-    # centered() pads $brand symmetrically inside the 51-char field.
-    my $body = ' ' . centered($brand, 51) . $filter . ' ';
+    # Inner width = 65. Right segment: 11 (filter) + 1 (trailing space) = 12.
+    # Left segment: 1 (leading space). Brand field: 65 - 1 - 12 = 52 chars.
+    # centered() pads $brand symmetrically inside the 52-char field.
+    my $body = ' ' . centered($brand, 52) . $filter . ' ';
 
     # Sanity check: keeps us honest if someone tweaks a constant.
     die "title row width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
@@ -1159,10 +1159,10 @@ sub tui_info_row1 {
     my $freq   = tui_fake_freq($st->{current}, scalar @{ $st->{stations} });
     my $freq_label = sprintf '%4d kHz', $freq;     # 8 chars
 
-    # Inner card width is 58 (the box uses 60, minus the two │ chars).
+    # Inner card width is 59 (the box uses 61, minus the two │ chars).
     # Layout: "│ ► " (4) + name (variable) + spaces + freq_label (8) + " │" (2)
-    # Card visible width 60 includes the two │ chars; inner is 58.
-    my $inner_card = 58;
+    # Card visible width 61 includes the two │ chars; inner is 59.
+    my $inner_card = 59;
     my $name_w     = $inner_card - 2 - 8 - 1;     # leave room for "► " and " freq"
     my $name_t     = truncate_to($name, $name_w);
     my $left       = '► ' . $name_t;
@@ -1171,8 +1171,8 @@ sub tui_info_row1 {
     my $card_inner = $left . (' ' x $pad) . $freq_label;
     $card_inner = pad_to($card_inner, $inner_card);
 
-    # Wrap with "│" and the outer 3-space margin so the whole thing is exactly 64
-    # wide: "   │" (4) + 58 + "│ " (2) = 64.
+    # Wrap with "│" and the outer 3-space margin so the whole thing is exactly 65
+    # wide: "   │" (4) + 59 + "│ " (2) = 65.
     my $body = '   │' . $card_inner . '│ ';
     die "info1 width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
 
@@ -1189,18 +1189,17 @@ sub tui_info_row1 {
 sub tui_info_row2 {
     my ($st) = @_;
     my $track = $st->{track};
+    my $inner_card = 59;
     my $display;
     if (defined $track && length $track) {
-        $display = '♪ ' . truncate_to($track, 56 - 2);   # 56 = inner card minus a 2-char prefix slot
+        $display = '♪ ' . truncate_to($track, $inner_card - 2);   # inner_card - 2-char prefix slot
     } else {
         my $waiting = ($st->{tune_start} && time() - $st->{tune_start} < 5)
             ? '… tuning in …'
             : '(no track info)';
         $display = '♪ ' . $waiting;
     }
-    my $inner_card = 58;
     my $card_inner = pad_to($display, $inner_card);
-
     my $body = '   │' . $card_inner . '│ ';
     die "info2 width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
 
@@ -1214,11 +1213,11 @@ sub tui_info_row2 {
 
 # Top, bottom edges of the station-info card
 sub tui_card_top {
-    my $body = '   ┌' . ('─' x 58) . '┐ ';
+    my $body = '   ┌' . ('─' x 59) . '┐ ';
     return "${CYAN}${body}${RESET}";
 }
 sub tui_card_bot {
-    my $body = '   └' . ('─' x 58) . '┘ ';
+    my $body = '   └' . ('─' x 59) . '┘ ';
     return "${CYAN}${body}${RESET}";
 }
 
