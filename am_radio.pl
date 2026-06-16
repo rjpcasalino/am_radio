@@ -133,7 +133,7 @@ ${BOLD}Special station presets:${RESET}
 
 ${BOLD}TUI window:${RESET}
   --resize   Ask the terminal emulator to resize itself to the exact
-             dimensions of the AM_RADIO TUI (66x22) on launch, then
+             dimensions of the AM_RADIO TUI (67x22) on launch, then
              restore the previous size on exit. Uses the xterm
              CSI 8 t escape sequence; requires a terminal emulator
              that honors it (xterm, iTerm2, foot, kitty, most
@@ -693,7 +693,7 @@ sub poll_track_loop {
 # TUI MODE - vintage tube-radio terminal UI
 # ==============================================================================
 #
-# Layout (66 cols x 22 rows, Unicode box drawing):
+# Layout (67 cols x 22 rows, Unicode box drawing):
 #
 #   ╔════════════════════════════════════════════════════════════════╗
 #   ║                          AM_RADIO                 [Lo-Fi:OFF] ║
@@ -734,8 +734,8 @@ sub poll_track_loop {
 
 # Visible widths used by the drawing routines. Don't change without re-doing
 # the padding maths in the row builders.
-my $TUI_WIDTH      = 66;     # total terminal columns we use
-my $TUI_INNER      = 64;     # chars between the left and right border
+my $TUI_WIDTH      = 67;     # total terminal columns we use
+my $TUI_INNER      = 65;     # chars between the left and right border
 my $TUI_HEIGHT     = 22;     # total rows
 my $TUI_DIAL_WIDTH = 56;     # length of the horizontal dial line
 my $TUI_DIAL_LEFT  = 4;      # left padding from the inner column 0 of the dial
@@ -1106,7 +1106,7 @@ sub truncate_to {
 }
 
 # ------------------------------------------------------------------------------
-# Drawing primitives. Each row of the TUI is exactly $TUI_INNER (64) chars
+# Drawing primitives. Each row of the TUI is exactly $TUI_INNER (65) chars
 # wide INSIDE the borders. We build the row as plain text first, then wrap
 # with the border chars. ANSI color codes are added as prefixes/suffixes
 # around specific spans - they don't count toward visible width.
@@ -1502,7 +1502,7 @@ sub tui_search_content_rows {
 # ------------------------------------------------------------------------------
 # tui_draw - assemble all rows and flush them to the screen in one pass.
 #
-# Every content row is exactly $TUI_INNER (64) visible characters wide; the
+# Every content row is exactly $TUI_INNER (65) visible characters wide; the
 # outer border glyphs (║, ╔, ╚ …) are added here as the array is built.
 # The cursor is moved to the top-left corner (ESC[H) before printing so the
 # entire panel is redrawn in-place rather than scrolling.  ESC[K at the end
@@ -1514,7 +1514,7 @@ sub tui_draw {
     # Assemble all 21 rows (indices 0-20) into an array.  In search mode the
     # content rows (3-17) and the help row (19) are swapped out below.
     my @rows = (
-        # Row 0: Top outer border spanning the full TUI_WIDTH (66 columns)
+        # Row 0: Top outer border spanning the full TUI_WIDTH (67 columns)
         "${CYAN}╔" . ('═' x $TUI_INNER) . "╗${RESET}",
 
         # Row 1: Title bar — AM_RADIO branding centred, Lo-Fi badge on the right
