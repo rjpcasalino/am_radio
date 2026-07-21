@@ -125,19 +125,17 @@ ${BOLD}Options:${RESET}
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
 
+${BOLD}Long options (use with -t):${RESET}
+  --resize   Ask the terminal emulator to resize to the TUI panel
+             dimensions (67×22) on launch and restore on exit.
+             Honored by xterm, iTerm2, foot, kitty, and VTE-based
+             terminals; silently ignored by Terminal.app and tmux.
+
 ${BOLD}Special station presets:${RESET}
   --afn      Load American Forces Network (AFN) stations
              Includes AFN GO (Tokyo, Humphreys, Bahrain), AFN 360 stations
              from Guantanamo Bay, Bahrain, Benelux, Bavaria, Vicenza,
              Wiesbaden, and AFN İncirlik (Turkey)
-
-${BOLD}TUI window:${RESET}
-  --resize   Ask the terminal emulator to resize itself to the exact
-             dimensions of the AM_RADIO TUI (67x22) on launch, then
-             restore the previous size on exit. Uses the xterm
-             CSI 8 t escape sequence; requires a terminal emulator
-             that honors it (xterm, iTerm2, foot, kitty, most
-             VTE-based terminals). Only meaningful with -t.
 
 ${BOLD}Discovery examples:${RESET}
   $name -f                     # Interactive menu (by country, region, tag, etc.)
@@ -693,7 +691,7 @@ sub poll_track_loop {
 # TUI MODE - vintage tube-radio terminal UI
 # ==============================================================================
 #
-# Layout (67 cols x 22 rows, Unicode box drawing):
+# Layout (66 cols x 22 rows, Unicode box drawing):
 #
 #   ╔════════════════════════════════════════════════════════════════╗
 #   ║                          AM_RADIO                 [Lo-Fi:OFF] ║
@@ -734,11 +732,15 @@ sub poll_track_loop {
 
 # Visible widths used by the drawing routines. Don't change without re-doing
 # the padding maths in the row builders.
-my $TUI_WIDTH      = 67;     # total terminal columns we use
-my $TUI_INNER      = 65;     # chars between the left and right border
+my $TUI_WIDTH      = 66;     # total terminal columns we use
+my $TUI_INNER      = 64;     # chars between the left and right border
 my $TUI_HEIGHT     = 22;     # total rows
 my $TUI_DIAL_WIDTH = 56;     # length of the horizontal dial line
 my $TUI_DIAL_LEFT  = 4;      # left padding from the inner column 0 of the dial
+
+# --resize flag: set from command-line parsing; used by radio_tui() to request
+# a terminal resize on launch. Declared here (before radio_tui) for visibility.
+our $RESIZE_TERM   = 0;
 
 # ------------------------------------------------------------------------------
 # tui_term_setup / tui_term_restore
@@ -815,13 +817,8 @@ sub tui_term_size {
 # ------------------------------------------------------------------------------
 # tui_request_term_resize - ask the terminal emulator to resize its window
 # to the given (rows, cols) using the xterm "CSI 8 ; rows ; cols t" sequence.
-# This is honored by xterm, iTerm2, foot, kitty, and most VTE-based terminals;
-# terminals that don't implement it (notably macOS Terminal.app and tmux by
-# default) will simply ignore the bytes.
-#
-# We use printf-on-STDOUT and immediately flush so the escape lands before any
-# subsequent draw. Caller is responsible for waiting for the resize to settle
-# (a short sleep + re-measuring via tui_term_size works well in practice).
+# Honored by xterm, iTerm2, foot, kitty, and most VTE-based terminals;
+# silently ignored by Terminal.app and tmux by default.
 # ------------------------------------------------------------------------------
 sub tui_request_term_resize {
     my ($rows, $cols) = @_;
@@ -1106,7 +1103,7 @@ sub truncate_to {
 }
 
 # ------------------------------------------------------------------------------
-# Drawing primitives. Each row of the TUI is exactly $TUI_INNER (65) chars
+# Drawing primitives. Each row of the TUI is exactly $TUI_INNER (64) chars
 # wide INSIDE the borders. We build the row as plain text first, then wrap
 # with the border chars. ANSI color codes are added as prefixes/suffixes
 # around specific spans - they don't count toward visible width.
@@ -1131,10 +1128,10 @@ sub tui_title_row {
     my $filter = $st->{filter} ? '[Lo-Fi:ON ]'   # 11 visible chars (trailing space keeps width)
                                : '[Lo-Fi:OFF]';
 
-    # Inner width = 65. Right segment: 11 (filter) + 1 (trailing space) = 12.
-    # Left segment: 1 (leading space). Brand field: 65 - 1 - 12 = 52 chars.
-    # centered() pads $brand symmetrically inside the 52-char field.
-    my $body = ' ' . centered($brand, 52) . $filter . ' ';
+    # Inner width = 64. Right segment: 11 (filter) + 1 (trailing space) = 12.
+    # Left segment: 1 (leading space). Brand field: 64 - 1 - 12 = 51 chars.
+    # centered() pads $brand symmetrically inside the 51-char field.
+    my $body = ' ' . centered($brand, 51) . $filter . ' ';
 
     # Sanity check: keeps us honest if someone tweaks a constant.
     die "title row width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
@@ -1159,10 +1156,10 @@ sub tui_info_row1 {
     my $freq   = tui_fake_freq($st->{current}, scalar @{ $st->{stations} });
     my $freq_label = sprintf '%4d kHz', $freq;     # 8 chars
 
-    # Inner card width is 59 (the box uses 61, minus the two │ chars).
+    # Inner card width is 58 (the box uses 60, minus the two │ chars).
     # Layout: "│ ► " (4) + name (variable) + spaces + freq_label (8) + " │" (2)
-    # Card visible width 61 includes the two │ chars; inner is 59.
-    my $inner_card = 59;
+    # Card visible width 60 includes the two │ chars; inner is 58.
+    my $inner_card = 58;
     my $name_w     = $inner_card - 2 - 8 - 1;     # leave room for "► " and " freq"
     my $name_t     = truncate_to($name, $name_w);
     my $left       = '► ' . $name_t;
@@ -1171,8 +1168,8 @@ sub tui_info_row1 {
     my $card_inner = $left . (' ' x $pad) . $freq_label;
     $card_inner = pad_to($card_inner, $inner_card);
 
-    # Wrap with "│" and the outer 3-space margin so the whole thing is exactly 65
-    # wide: "   │" (4) + 59 + "│ " (2) = 65.
+    # Wrap with "│" and the outer 3-space margin so the whole thing is exactly 64
+    # wide: "   │" (4) + 58 + "│ " (2) = 64.
     my $body = '   │' . $card_inner . '│ ';
     die "info1 width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
 
@@ -1189,17 +1186,18 @@ sub tui_info_row1 {
 sub tui_info_row2 {
     my ($st) = @_;
     my $track = $st->{track};
-    my $inner_card = 59;
     my $display;
     if (defined $track && length $track) {
-        $display = '♪ ' . truncate_to($track, $inner_card - 2);   # inner_card - 2-char prefix slot
+        $display = '♪ ' . truncate_to($track, 56 - 2);   # 56 = inner card minus a 2-char prefix slot
     } else {
         my $waiting = ($st->{tune_start} && time() - $st->{tune_start} < 5)
             ? '… tuning in …'
             : '(no track info)';
         $display = '♪ ' . $waiting;
     }
+    my $inner_card = 58;
     my $card_inner = pad_to($display, $inner_card);
+
     my $body = '   │' . $card_inner . '│ ';
     die "info2 width " . length($body) . " != $TUI_INNER" if length($body) != $TUI_INNER;
 
@@ -1213,11 +1211,11 @@ sub tui_info_row2 {
 
 # Top, bottom edges of the station-info card
 sub tui_card_top {
-    my $body = '   ┌' . ('─' x 59) . '┐ ';
+    my $body = '   ┌' . ('─' x 58) . '┐ ';
     return "${CYAN}${body}${RESET}";
 }
 sub tui_card_bot {
-    my $body = '   └' . ('─' x 59) . '┘ ';
+    my $body = '   └' . ('─' x 58) . '┘ ';
     return "${CYAN}${body}${RESET}";
 }
 
@@ -1501,7 +1499,7 @@ sub tui_search_content_rows {
 # ------------------------------------------------------------------------------
 # tui_draw - assemble all rows and flush them to the screen in one pass.
 #
-# Every content row is exactly $TUI_INNER (65) visible characters wide; the
+# Every content row is exactly $TUI_INNER (64) visible characters wide; the
 # outer border glyphs (║, ╔, ╚ …) are added here as the array is built.
 # The cursor is moved to the top-left corner (ESC[H) before printing so the
 # entire panel is redrawn in-place rather than scrolling.  ESC[K at the end
@@ -1513,7 +1511,7 @@ sub tui_draw {
     # Assemble all 21 rows (indices 0-20) into an array.  In search mode the
     # content rows (3-17) and the help row (19) are swapped out below.
     my @rows = (
-        # Row 0: Top outer border spanning the full TUI_WIDTH (67 columns)
+        # Row 0: Top outer border spanning the full TUI_WIDTH (66 columns)
         "${CYAN}╔" . ('═' x $TUI_INNER) . "╗${RESET}",
 
         # Row 1: Title bar — AM_RADIO branding centred, Lo-Fi badge on the right
@@ -1715,19 +1713,17 @@ sub radio_tui {
     # too small); subsequent resize handling is done in the event loop.
     my ($rows, $cols) = tui_term_size();
 
-    # --resize: ask the terminal emulator to size itself to the AM_RADIO
-    # panel dimensions, then re-measure. We stash the pre-resize dimensions
-    # so the cleanup path can restore them on exit. If the terminal doesn't
-    # honor CSI 8 t, re-measuring just yields the original size and the
-    # below "too small" check will still fire as it would have without --resize.
+    # --resize: ask the terminal emulator to size itself to exactly fit the
+    # AM_RADIO panel (67 cols × 22 rows — the panel is 66 cols but we use 67
+    # to provide a 1-column buffer that prevents line-wrap on some emulators).
+    # We stash the pre-resize dimensions so cleanup can restore them on exit.
     my $orig_rows = $rows;
     my $orig_cols = $cols;
     my $did_resize = 0;
-    if ($main::RESIZE_TERM) {
-        tui_request_term_resize($TUI_HEIGHT, $TUI_WIDTH);
+    if ($RESIZE_TERM) {
+        tui_request_term_resize($TUI_HEIGHT, $TUI_WIDTH + 1);
         # Give the window manager a beat to perform the resize and for
-        # SIGWINCH to settle before we re-query. 150ms is enough on every
-        # terminal I tested and imperceptible to the user.
+        # SIGWINCH to settle before we re-query.
         select(undef, undef, undef, 0.15);
         ($rows, $cols) = tui_term_size();
         $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
@@ -1771,9 +1767,10 @@ sub radio_tui {
         tui_stop_mpv(\%st);
         tui_term_restore($saved_term);
         print "\e[?25h\e[?1049l";                 # show cursor, leave alt screen
-        # If --resize moved the window, put it back where we found it so
-        # the user's terminal isn't left at AM_RADIO dimensions afterwards.
-        tui_request_term_resize($orig_rows, $orig_cols) if $did_resize;
+        # If we resized the terminal on launch, restore its original dimensions.
+        if ($did_resize) {
+            tui_request_term_resize($orig_rows, $orig_cols);
+        }
     };
     local $SIG{INT}  = sub { $cleanup->(); exit 130; };
     local $SIG{TERM} = sub { $cleanup->(); exit 143; };
@@ -1962,11 +1959,9 @@ my $FILTER_OLD_RADIO = 0;
 my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
 my $AFN_MODE         = 0;
-our $RESIZE_TERM     = 0;
 
-# Strip long options from ARGV before getopts runs (getopts only handles short
-# options). Keep the list small and explicit so we don't accidentally swallow
-# anything that looks long-option-ish.
+# Check for long options in ARGV before getopts processes anything.
+# This must happen before getopts because getopts doesn't handle long options.
 for my $i (reverse 0 .. $#ARGV) {
     if ($ARGV[$i] eq '--afn') {
         $AFN_MODE = 1;
