@@ -27,7 +27,7 @@ use POSIX          ();
 use lib 'lib';
 use AmRadio::Colors    qw(:all);
 use AmRadio::Config    qw(load_stations list_stations load_afn_stations @STATIONS);
-use AmRadio::Discovery qw(discover_stations dump_info);
+use AmRadio::Discovery qw(discover_stations dump_info tool_on_path);
 use AmRadio::IPC       qw(poll_track_loop);
 use AmRadio::TUI       qw(radio_tui);
 
@@ -162,7 +162,7 @@ sub verbose_log {
 # Require mpv
 # ==============================================================================
 
-if (system("command -v mpv > /dev/null 2>&1") != 0) {
+unless (tool_on_path('mpv')) {
     print STDERR "Error: 'mpv' is required but not installed.\n";
     exit 1;
 }

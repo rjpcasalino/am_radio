@@ -39,7 +39,7 @@ use Time::HiRes qw(time sleep);
 use JSON::PP     qw(decode_json);
 use AmRadio::Colors     qw(:all);
 use AmRadio::IPC        qw(ipc_get_property);
-use AmRadio::Discovery  qw(run_capture uri_escape);
+use AmRadio::Discovery  qw(run_capture uri_escape tool_on_path);
 use AmRadio::Config     qw(save_station $CONFIG_FILE @STATIONS);
 
 our @EXPORT_OK = qw( radio_tui );
@@ -260,7 +260,7 @@ sub tui_dump_stream_info {
         print "\n";
     }
 
-    if (system("command -v ffprobe > /dev/null 2>&1") == 0) {
+    if (_tool_on_path('ffprobe')) {
         print "${CYAN}--- Deep Stream Analysis (ffprobe) ---${RESET}\n";
         my $probe = run_capture(
             'ffprobe', '-v', 'quiet', '-timeout', '5000000',
@@ -345,9 +345,7 @@ sub tui_info_row1 {
     my $pad        = $inner_card - length($left) - length($freq_label);
     $pad = 1 if $pad < 1;
     my $card_inner = _pad_to($left . (' ' x $pad) . $freq_label, $inner_card);
-    my $body       = '   \x{2502}' . $card_inner . '\x{2502} ';     # │
-    # Use literal glyphs for correct length()
-    $body = '   │' . $card_inner . '│ ';
+    my $body = '   │' . $card_inner . '│ ';
     die "info1 width" if length($body) != TUI_INNER;
     my $c = $body;
     $c =~ s/\x{25ba}/${GREEN}${BOLD}\x{25ba}$RESET/;
@@ -473,8 +471,7 @@ sub tui_msg_row {
 }
 
 sub tui_help_row {
-    my $body = '  \x{25c4} \x{25ba} tune   1-9 preset   o lo-fi   i info   r retune   f find   q quit  ';
-    $body = '  ◀ ▶ tune   1-9 preset   o lo-fi   i info   r retune   f find   q quit  ';
+    my $body = '  ◀ ▶ tune   1-9 preset   o lo-fi   i info   r retune   f find   q quit  ';
     $body = _pad_to($body, TUI_INNER);
     (my $c = $body) =~ s/(◀ ▶|1-9|o|i|r|f|q)/${CYAN}$1$RESET/g;
     return $c;
@@ -508,8 +505,7 @@ sub tui_search_content_rows {
     my $prompt_inner = _pad_to($label . $q_display . $cursor, $inner_card);
     (my $prompt_colored = $prompt_inner) =~ s/Search:/${CYAN}Search:$RESET/;
     $prompt_colored =~ s/_$/${BOLD}_$RESET/ if $mode == 1;
-    my $card_row = '   ' . "${CYAN}\x{2502}$RESET" . $prompt_colored . "${CYAN}\x{2502}$RESET" . ' ';
-    $card_row    = '   ' . "${CYAN}│$RESET" . $prompt_colored . "${CYAN}│$RESET" . ' ';
+    my $card_row = '   ' . "${CYAN}│$RESET" . $prompt_colored . "${CYAN}│$RESET" . ' ';
 
     # Status line
     my $status_text;

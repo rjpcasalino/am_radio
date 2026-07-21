@@ -26,6 +26,7 @@ our @EXPORT_OK = qw(
     uri_escape
     run_capture
     require_tool
+    tool_on_path
     discover_stations
     discover_stations_interactive
     dump_info
@@ -62,11 +63,28 @@ sub run_capture {
 }
 
 # ------------------------------------------------------------------------------
-# require_tool - die with a friendly message if $tool isn't on PATH
+# _tool_on_path - safely check whether $tool exists on PATH without involving
+# a shell.  Iterates PATH directories using list-form stat, so $tool can never
+# be misinterpreted as shell code even if it contains metacharacters.
+# ------------------------------------------------------------------------------
+sub _tool_on_path {
+    my ($tool) = @_;
+    for my $dir (split /:/, ($ENV{PATH} // '')) {
+        return 1 if -x "$dir/$tool";
+    }
+    return 0;
+}
+
+# Public alias for use by other modules (no-warnings suppresses the
+# "used only once" false-positive from the glob assignment)
+{ no warnings 'once'; *tool_on_path = \&_tool_on_path; }
+
+# ------------------------------------------------------------------------------
+# require_tool - exit with a friendly message if $tool isn't on PATH
 # ------------------------------------------------------------------------------
 sub require_tool {
     my ($tool) = @_;
-    if (system("command -v $tool > /dev/null 2>&1") != 0) {
+    unless (_tool_on_path($tool)) {
         print STDERR "${YELLOW}Error: '$tool' is required but not installed.${RESET}\n";
         exit 1;
     }
@@ -77,7 +95,7 @@ sub require_tool {
 # ------------------------------------------------------------------------------
 sub _has_tool {
     my ($tool) = @_;
-    return system("command -v $tool > /dev/null 2>&1") == 0 ? 1 : 0;
+    return _tool_on_path($tool);
 }
 
 # ------------------------------------------------------------------------------
