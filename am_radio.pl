@@ -125,6 +125,12 @@ ${BOLD}Options:${RESET}
   -v         Verbose logging (debug mpv lifecycle, IPC, audio drops)
   -h         Show this help message and exit
 
+${BOLD}Long options (use with -t):${RESET}
+  --resize   Ask the terminal emulator to resize to the TUI panel
+             dimensions (67×22) on launch and restore on exit.
+             Honored by xterm, iTerm2, foot, kitty, and VTE-based
+             terminals; silently ignored by Terminal.app and tmux.
+
 ${BOLD}Special station presets:${RESET}
   --afn      Load American Forces Network (AFN) stations
              Includes AFN GO (Tokyo, Humphreys, Bahrain), AFN 360 stations
@@ -732,6 +738,10 @@ my $TUI_HEIGHT     = 22;     # total rows
 my $TUI_DIAL_WIDTH = 56;     # length of the horizontal dial line
 my $TUI_DIAL_LEFT  = 4;      # left padding from the inner column 0 of the dial
 
+# --resize flag: set from command-line parsing; used by radio_tui() to request
+# a terminal resize on launch. Declared here (before radio_tui) for visibility.
+our $RESIZE_TERM   = 0;
+
 # ------------------------------------------------------------------------------
 # tui_term_setup / tui_term_restore
 #
@@ -802,6 +812,18 @@ sub tui_term_size {
     chomp $size;
     my ($rows, $cols) = split /\s+/, $size;
     return ($rows || 24, $cols || 80);
+}
+
+# ------------------------------------------------------------------------------
+# tui_request_term_resize - ask the terminal emulator to resize its window
+# to the given (rows, cols) using the xterm "CSI 8 ; rows ; cols t" sequence.
+# Honored by xterm, iTerm2, foot, kitty, and most VTE-based terminals;
+# silently ignored by Terminal.app and tmux by default.
+# ------------------------------------------------------------------------------
+sub tui_request_term_resize {
+    my ($rows, $cols) = @_;
+    local $| = 1;
+    printf STDOUT "\e[8;%d;%dt", $rows, $cols;
 }
 
 # ------------------------------------------------------------------------------
@@ -1690,6 +1712,23 @@ sub radio_tui {
     # Record the initial terminal size.  The startup check is strict (exit if
     # too small); subsequent resize handling is done in the event loop.
     my ($rows, $cols) = tui_term_size();
+
+    # --resize: ask the terminal emulator to size itself to exactly fit the
+    # AM_RADIO panel (67 cols × 22 rows — the panel is 66 cols but we use 67
+    # to provide a 1-column buffer that prevents line-wrap on some emulators).
+    # We stash the pre-resize dimensions so cleanup can restore them on exit.
+    my $orig_rows = $rows;
+    my $orig_cols = $cols;
+    my $did_resize = 0;
+    if ($RESIZE_TERM) {
+        tui_request_term_resize($TUI_HEIGHT, $TUI_WIDTH + 1);
+        # Give the window manager a beat to perform the resize and for
+        # SIGWINCH to settle before we re-query.
+        select(undef, undef, undef, 0.15);
+        ($rows, $cols) = tui_term_size();
+        $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+    }
+
     if ($rows < $TUI_HEIGHT || $cols < $TUI_WIDTH) {
         print STDERR "${YELLOW}Terminal is ${cols}x${rows}; need at least ${TUI_WIDTH}x${TUI_HEIGHT}.${RESET}\n";
         exit 1;
@@ -1728,6 +1767,10 @@ sub radio_tui {
         tui_stop_mpv(\%st);
         tui_term_restore($saved_term);
         print "\e[?25h\e[?1049l";                 # show cursor, leave alt screen
+        # If we resized the terminal on launch, restore its original dimensions.
+        if ($did_resize) {
+            tui_request_term_resize($orig_rows, $orig_cols);
+        }
     };
     local $SIG{INT}  = sub { $cleanup->(); exit 130; };
     local $SIG{TERM} = sub { $cleanup->(); exit 143; };
@@ -1917,12 +1960,15 @@ my $SHOW_INFO        = 0;
 my $TUI_MODE         = 0;
 my $AFN_MODE         = 0;
 
-# Check for --afn long option in ARGV before getopts processes anything
-# This must happen before getopts because getopts doesn't handle long options
+# Check for long options in ARGV before getopts processes anything.
+# This must happen before getopts because getopts doesn't handle long options.
 for my $i (reverse 0 .. $#ARGV) {
     if ($ARGV[$i] eq '--afn') {
         $AFN_MODE = 1;
-        splice(@ARGV, $i, 1);  # Remove --afn from ARGV
+        splice(@ARGV, $i, 1);
+    } elsif ($ARGV[$i] eq '--resize') {
+        $RESIZE_TERM = 1;
+        splice(@ARGV, $i, 1);
     }
 }
 
