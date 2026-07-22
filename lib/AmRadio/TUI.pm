@@ -260,7 +260,7 @@ sub tui_dump_stream_info {
         print "\n";
     }
 
-    if (_tool_on_path('ffprobe')) {
+    if (tool_on_path('ffprobe')) {
         print "${CYAN}--- Deep Stream Analysis (ffprobe) ---${RESET}\n";
         my $probe = run_capture(
             'ffprobe', '-v', 'quiet', '-timeout', '5000000',
