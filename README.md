@@ -4,7 +4,7 @@
 
 A vibe-coded command-line first and mobile second (not maintained really) internet radio player with vintage AM radio aesthetics.
 
-Requires [`mpv`](https://mpv.io/) if running on Linux. 
+Requires [`mpv`](https://mpv.io/). Many thanks to the humans maintaining the source code of `mpv`.
 
 ## Features
 
