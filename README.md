@@ -2,9 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 
-A command-line and mobile internet radio player with vintage AM radio aesthetics.
-
-**Disclaimer:** Parts of this codebase were developed with assistance from AI tools. All code is original work and is licensed under the BSD 3-Clause License. Me, the human, has read most of it and it seems OK for slop. A nice Big Mac of slop but it runs and works and has bugs that maybe more or less minor and perhaps aesthetic UX stuff only. I have my doubts but the bugs can be prompted away or hand coded away. Use caution and read the code and let me know.
+A vibe-coded command-line first and mobile second (not maintained really) internet radio player with vintage AM radio aesthetics.
 
 Requires [`mpv`](https://mpv.io/) if running on Linux. 
 
@@ -138,3 +136,5 @@ This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICE
 - `shared_preferences` package (BSD-3-Clause)
 
 All dependencies maintain compatible licenses for commercial distribution.
+
+**Disclaimer:** Parts of this codebase were developed with assistance from AI tools. All code is original work and is licensed under the BSD 3-Clause License. Me, the human, has read most of it and it seems OK for slop. A nice Big Mac of slop but it runs and works and has bugs that maybe more or less minor and perhaps aesthetic UX stuff only. I have my doubts but the bugs can be prompted away or hand coded away. Use caution and read the code and let me know.
