@@ -688,6 +688,9 @@ sub radio_tui {
         select(undef, undef, undef, 0.15);
         ($rows, $cols) = tui_term_size();
         $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+        if (!$did_resize) {
+            print STDERR "${YELLOW}Warning: --resize had no effect (terminal emulator may not support xterm resize escapes, e.g. under Wayland/Sway).${RESET}\n";
+        }
     }
 
     if ($rows < TUI_HEIGHT || $cols < TUI_WIDTH) {
