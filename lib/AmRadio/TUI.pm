@@ -114,6 +114,18 @@ sub tui_request_term_resize {
     printf STDOUT "\e[8;%d;%dt", $rows, $cols;
 }
 
+sub tui_request_term_resize_sway {
+    my ($rows, $cols) = @_;
+    # Under Sway/Wayland the xterm resize escape is a no-op; use swaymsg to
+    # resize the focused window.  We estimate pixel dimensions conservatively
+    # (12 px wide × 24 px tall per cell) so the result fits at any common font
+    # size.  The user can always resize further manually.
+    return unless $ENV{SWAYSOCK} && length $ENV{SWAYSOCK};
+    my $pw = $cols * 12;
+    my $ph = $rows * 24;
+    system('swaymsg', "resize set ${pw}px ${ph}px");
+}
+
 # ==============================================================================
 # mpv lifecycle helpers
 # ==============================================================================
@@ -682,12 +694,24 @@ sub radio_tui {
     my ($rows, $cols) = tui_term_size();
     my ($orig_rows, $orig_cols) = ($rows, $cols);
     my $did_resize = 0;
+    my $used_sway  = 0;
 
     if ($RESIZE_TERM) {
         tui_request_term_resize(TUI_HEIGHT, TUI_WIDTH + 1);
         select(undef, undef, undef, 0.15);
         ($rows, $cols) = tui_term_size();
         $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+        if (!$did_resize && $ENV{SWAYSOCK}) {
+            # xterm escape is a no-op under Sway; fall back to swaymsg
+            tui_request_term_resize_sway(TUI_HEIGHT, TUI_WIDTH + 1);
+            select(undef, undef, undef, 0.25);
+            ($rows, $cols) = tui_term_size();
+            $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+            $used_sway  = $did_resize;
+        }
+        if (!$did_resize) {
+            print STDERR "${YELLOW}Warning: --resize had no effect (terminal emulator may not support xterm resize escapes, e.g. under Wayland/Sway).${RESET}\n";
+        }
     }
 
     if ($rows < TUI_HEIGHT || $cols < TUI_WIDTH) {
@@ -722,7 +746,13 @@ sub radio_tui {
         tui_stop_mpv(\%st);
         tui_term_restore($saved_term);
         print "\e[?25h\e[?1049l";         # show cursor, leave alt screen
-        tui_request_term_resize($orig_rows, $orig_cols) if $did_resize;
+        if ($did_resize) {
+            if ($used_sway) {
+                tui_request_term_resize_sway($orig_rows, $orig_cols);
+            } else {
+                tui_request_term_resize($orig_rows, $orig_cols);
+            }
+        }
     };
     local $SIG{INT}  = sub { $cleanup->(); exit 130 };
     local $SIG{TERM} = sub { $cleanup->(); exit 143 };
