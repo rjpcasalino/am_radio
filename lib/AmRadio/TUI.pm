@@ -35,6 +35,8 @@ use warnings;
 use utf8;
 use Exporter 'import';
 use POSIX qw(:termios_h :sys_wait_h);
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
 use Time::HiRes qw(time sleep);
 use JSON::PP     qw(decode_json);
 use AmRadio::Colors     qw(:all);
@@ -177,6 +179,35 @@ sub tui_hyprctl_dispatch {
     return 0;
 }
 
+sub tui_hyprland_socket_paths {
+    return () unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    my $sig = $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    my @roots;
+    push @roots, $ENV{XDG_RUNTIME_DIR} if defined $ENV{XDG_RUNTIME_DIR} && length $ENV{XDG_RUNTIME_DIR};
+    push @roots, '/tmp';
+    return map { "$_/hypr/$sig/.socket.sock" } @roots;
+}
+
+sub tui_hyprland_dispatch_socket {
+    my ($dispatcher, @args) = @_;
+    my $cmd = join(' ', 'dispatch', $dispatcher, @args);
+
+    for my $path (tui_hyprland_socket_paths()) {
+        next unless -S $path;
+        my $sock = IO::Socket::UNIX->new(
+            Type => SOCK_STREAM(),
+            Peer => $path,
+        );
+        next unless $sock;
+        print {$sock} $cmd;
+        my $resp = <$sock>;
+        close $sock;
+        return 1 if defined $resp && $resp !~ /\berror\b/i;
+    }
+
+    return 0;
+}
+
 sub tui_request_term_resize_hyprland {
     my ($rows, $cols, $float_window) = @_;
     return unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
@@ -187,11 +218,15 @@ sub tui_request_term_resize_hyprland {
     my $was_floating = tui_hyprland_window_is_floating();
 
     if ($float_window && !$was_floating) {
-        tui_hyprctl_dispatch('togglefloating');
+        tui_hyprctl_dispatch('togglefloating') || tui_hyprland_dispatch_socket('togglefloating');
+        if (!tui_hyprland_window_is_floating()) {
+            tui_hyprctl_dispatch('setfloating') || tui_hyprland_dispatch_socket('setfloating');
+        }
         select(undef, undef, undef, 0.1);
     }
 
-    tui_hyprctl_dispatch('resizeactive', 'exact', $pw, $ph);
+    tui_hyprctl_dispatch('resizeactive', 'exact', $pw, $ph)
+        || tui_hyprland_dispatch_socket('resizeactive', 'exact', $pw, $ph);
     return $was_floating;
 }
 
