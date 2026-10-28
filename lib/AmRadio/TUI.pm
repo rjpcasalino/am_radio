@@ -138,17 +138,41 @@ sub tui_hyprland_window_is_floating {
     return $window->{floating} ? 1 : 0;
 }
 
+sub tui_run_quiet {
+    my (@cmd) = @_;
+    my $pid = open(my $ph, '-|');
+    return 0 unless defined $pid;
+    if ($pid == 0) {
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+        exec(@cmd) or POSIX::_exit(127);
+    }
+    close $ph;
+    return $? == 0 ? 1 : 0;
+}
+
 sub tui_hyprctl_dispatch {
     my ($dispatcher, @args) = @_;
     my @parts = ($dispatcher, @args);
     my $flat  = join(' ', @parts);
 
     # Standard hyprctl CLI syntax.
-    return 1 if system('hyprctl', 'dispatch', $dispatcher, @args) == 0;
+    return 1 if tui_run_quiet('hyprctl', 'dispatch', $dispatcher, @args);
     # Some wrappers expect the dispatcher payload as a single argument.
-    return 1 if system('hyprctl', 'dispatch', $flat) == 0;
+    return 1 if tui_run_quiet('hyprctl', 'dispatch', $flat);
     # Lua-style wrappers may require a quoted payload.
-    return 1 if system('hyprctl', 'dispatch', "'$flat'") == 0;
+    return 1 if tui_run_quiet('hyprctl', 'dispatch', "'$flat'");
+
+    # Lua-based Hyprland wrappers can require typed dispatcher objects.
+    if ($dispatcher eq 'togglefloating') {
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', 'hl.dsp.window.toggle_floating()');
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', 'hl.dsp.window.togglefloating()');
+    }
+    if ($dispatcher eq 'resizeactive' && @args >= 3 && $args[0] eq 'exact') {
+        my ($w, $h) = @args[1, 2];
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', "hl.dsp.window.resize_active('exact $w $h')");
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', "hl.dsp.window.resizeactive('exact $w $h')");
+    }
 
     return 0;
 }
