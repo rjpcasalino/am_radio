@@ -35,6 +35,8 @@ use warnings;
 use utf8;
 use Exporter 'import';
 use POSIX qw(:termios_h :sys_wait_h);
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
 use Time::HiRes qw(time sleep);
 use JSON::PP     qw(decode_json);
 use AmRadio::Colors     qw(:all);
@@ -112,6 +114,120 @@ sub tui_request_term_resize {
     my ($rows, $cols) = @_;
     local $| = 1;
     printf STDOUT "\e[8;%d;%dt", $rows, $cols;
+}
+
+sub tui_request_term_resize_sway {
+    my ($rows, $cols) = @_;
+    # Under Sway/Wayland the xterm resize escape is a no-op; use swaymsg to
+    # resize the focused window.  We estimate pixel dimensions conservatively
+    # (12 px wide × 24 px tall per cell) so the result fits at any common font
+    # size.  The user can always resize further manually.
+    return unless $ENV{SWAYSOCK} && length $ENV{SWAYSOCK};
+    my $pw = $cols * 12;
+    my $ph = $rows * 24;
+    system('swaymsg', "resize set ${pw}px ${ph}px");
+}
+
+sub tui_hyprland_window_is_floating {
+    return 0 unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    return 0 unless tool_on_path('hyprctl');
+
+    my $json = `hyprctl activewindow -j 2>/dev/null`;
+    return 0 unless defined $json && length $json;
+
+    my $window = eval { decode_json($json) };
+    return 0 unless ref($window) eq 'HASH';
+    return $window->{floating} ? 1 : 0;
+}
+
+sub tui_run_quiet {
+    my (@cmd) = @_;
+    my $pid = open(my $ph, '-|');
+    return 0 unless defined $pid;
+    if ($pid == 0) {
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+        exec(@cmd) or POSIX::_exit(127);
+    }
+    close $ph;
+    return $? == 0 ? 1 : 0;
+}
+
+sub tui_hyprctl_dispatch {
+    my ($dispatcher, @args) = @_;
+    my @parts = ($dispatcher, @args);
+    my $flat  = join(' ', @parts);
+
+    # Standard hyprctl CLI syntax.
+    return 1 if tui_run_quiet('hyprctl', 'dispatch', $dispatcher, @args);
+    # Some wrappers expect the dispatcher payload as a single argument.
+    return 1 if tui_run_quiet('hyprctl', 'dispatch', $flat);
+    # Lua-style wrappers may require a quoted payload.
+    return 1 if tui_run_quiet('hyprctl', 'dispatch', "'$flat'");
+
+    # Lua-based Hyprland wrappers can require typed dispatcher objects.
+    if ($dispatcher eq 'togglefloating') {
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', 'hl.dsp.window.toggle_floating()');
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', 'hl.dsp.window.togglefloating()');
+    }
+    if ($dispatcher eq 'resizeactive' && @args >= 3 && $args[0] eq 'exact') {
+        my ($w, $h) = @args[1, 2];
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', "hl.dsp.window.resize_active('exact $w $h')");
+        return 1 if tui_run_quiet('hyprctl', 'dispatch', "hl.dsp.window.resizeactive('exact $w $h')");
+    }
+
+    return 0;
+}
+
+sub tui_hyprland_socket_paths {
+    return () unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    my $sig = $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    my @roots;
+    push @roots, $ENV{XDG_RUNTIME_DIR} if defined $ENV{XDG_RUNTIME_DIR} && length $ENV{XDG_RUNTIME_DIR};
+    push @roots, '/tmp';
+    return map { "$_/hypr/$sig/.socket.sock" } @roots;
+}
+
+sub tui_hyprland_dispatch_socket {
+    my ($dispatcher, @args) = @_;
+    my $cmd = join(' ', 'dispatch', $dispatcher, @args);
+
+    for my $path (tui_hyprland_socket_paths()) {
+        next unless -S $path;
+        my $sock = IO::Socket::UNIX->new(
+            Type => SOCK_STREAM(),
+            Peer => $path,
+        );
+        next unless $sock;
+        print {$sock} $cmd;
+        my $resp = <$sock>;
+        close $sock;
+        return 1 if defined $resp && $resp !~ /\berror\b/i;
+    }
+
+    return 0;
+}
+
+sub tui_request_term_resize_hyprland {
+    my ($rows, $cols, $float_window) = @_;
+    return unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    return unless tool_on_path('hyprctl');
+
+    my $pw = $cols * 12;
+    my $ph = $rows * 24;
+    my $was_floating = tui_hyprland_window_is_floating();
+
+    if ($float_window && !$was_floating) {
+        tui_hyprctl_dispatch('togglefloating') || tui_hyprland_dispatch_socket('togglefloating');
+        if (!tui_hyprland_window_is_floating()) {
+            tui_hyprctl_dispatch('setfloating') || tui_hyprland_dispatch_socket('setfloating');
+        }
+        select(undef, undef, undef, 0.1);
+    }
+
+    tui_hyprctl_dispatch('resizeactive', 'exact', $pw, $ph)
+        || tui_hyprland_dispatch_socket('resizeactive', 'exact', $pw, $ph);
+    return $was_floating;
 }
 
 # ==============================================================================
@@ -682,12 +798,34 @@ sub radio_tui {
     my ($rows, $cols) = tui_term_size();
     my ($orig_rows, $orig_cols) = ($rows, $cols);
     my $did_resize = 0;
+    my $used_sway  = 0;
 
     if ($RESIZE_TERM) {
         tui_request_term_resize(TUI_HEIGHT, TUI_WIDTH + 1);
         select(undef, undef, undef, 0.15);
         ($rows, $cols) = tui_term_size();
         $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+        if (!$did_resize && $ENV{SWAYSOCK}) {
+            # xterm escape is a no-op under Sway/Wayland; fall back to swaymsg
+            tui_request_term_resize_sway(TUI_HEIGHT, TUI_WIDTH + 1);
+            select(undef, undef, undef, 0.25);
+            ($rows, $cols) = tui_term_size();
+            $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+            $used_sway  = $did_resize;
+        }
+        if (!$did_resize && $ENV{HYPRLAND_INSTANCE_SIGNATURE}) {
+            # Hyprland won't honor the xterm resize CSI escape either; resize the
+            # active terminal window with hyprctl. Some users prefer a floating
+            # terminal in tiled layouts, so we toggle float when needed.
+            tui_request_term_resize_hyprland(TUI_HEIGHT, TUI_WIDTH + 1, 1);
+            select(undef, undef, undef, 0.25);
+            ($rows, $cols) = tui_term_size();
+            $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+            $used_sway  = $did_resize;
+        }
+        if (!$did_resize) {
+            print STDERR "${YELLOW}Warning: --resize had no effect (terminal emulator may not support xterm resize escapes, e.g. under Wayland/Sway/Hyprland; the TUI will still launch if the terminal is large enough).${RESET}\n";
+        }
     }
 
     if ($rows < TUI_HEIGHT || $cols < TUI_WIDTH) {
@@ -722,7 +860,17 @@ sub radio_tui {
         tui_stop_mpv(\%st);
         tui_term_restore($saved_term);
         print "\e[?25h\e[?1049l";         # show cursor, leave alt screen
-        tui_request_term_resize($orig_rows, $orig_cols) if $did_resize;
+        if ($did_resize) {
+            if ($used_sway) {
+                if ($ENV{HYPRLAND_INSTANCE_SIGNATURE}) {
+                    tui_request_term_resize_hyprland($orig_rows, $orig_cols, 0);
+                } else {
+                    tui_request_term_resize_sway($orig_rows, $orig_cols);
+                }
+            } else {
+                tui_request_term_resize($orig_rows, $orig_cols);
+            }
+        }
     };
     local $SIG{INT}  = sub { $cleanup->(); exit 130 };
     local $SIG{TERM} = sub { $cleanup->(); exit 143 };
