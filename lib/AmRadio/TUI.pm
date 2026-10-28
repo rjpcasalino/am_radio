@@ -126,6 +126,36 @@ sub tui_request_term_resize_sway {
     system('swaymsg', "resize set ${pw}px ${ph}px");
 }
 
+sub tui_hyprland_window_is_floating {
+    return 0 unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    return 0 unless tool_on_path('hyprctl');
+
+    my $json = `hyprctl activewindow -j 2>/dev/null`;
+    return 0 unless defined $json && length $json;
+
+    my $window = eval { decode_json($json) };
+    return 0 unless ref($window) eq 'HASH';
+    return $window->{floating} ? 1 : 0;
+}
+
+sub tui_request_term_resize_hyprland {
+    my ($rows, $cols, $float_window) = @_;
+    return unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
+    return unless tool_on_path('hyprctl');
+
+    my $pw = $cols * 12;
+    my $ph = $rows * 24;
+    my $was_floating = tui_hyprland_window_is_floating();
+
+    if ($float_window && !$was_floating) {
+        system('hyprctl', 'dispatch', 'togglefloating');
+        select(undef, undef, undef, 0.1);
+    }
+
+    system('hyprctl', 'dispatch', 'resizeactive', 'exact', $pw, $ph);
+    return $was_floating;
+}
+
 # ==============================================================================
 # mpv lifecycle helpers
 # ==============================================================================
@@ -702,15 +732,25 @@ sub radio_tui {
         ($rows, $cols) = tui_term_size();
         $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
         if (!$did_resize && $ENV{SWAYSOCK}) {
-            # xterm escape is a no-op under Sway; fall back to swaymsg
+            # xterm escape is a no-op under Sway/Wayland; fall back to swaymsg
             tui_request_term_resize_sway(TUI_HEIGHT, TUI_WIDTH + 1);
             select(undef, undef, undef, 0.25);
             ($rows, $cols) = tui_term_size();
             $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
             $used_sway  = $did_resize;
         }
+        if (!$did_resize && $ENV{HYPRLAND_INSTANCE_SIGNATURE}) {
+            # Hyprland won't honor the xterm resize CSI escape either; resize the
+            # active terminal window with hyprctl. Some users prefer a floating
+            # terminal in tiled layouts, so we toggle float when needed.
+            tui_request_term_resize_hyprland(TUI_HEIGHT, TUI_WIDTH + 1, 1);
+            select(undef, undef, undef, 0.25);
+            ($rows, $cols) = tui_term_size();
+            $did_resize = ($rows != $orig_rows || $cols != $orig_cols);
+            $used_sway  = $did_resize;
+        }
         if (!$did_resize) {
-            print STDERR "${YELLOW}Warning: --resize had no effect (terminal emulator may not support xterm resize escapes, e.g. under Wayland/Sway).${RESET}\n";
+            print STDERR "${YELLOW}Warning: --resize had no effect (terminal emulator may not support xterm resize escapes, e.g. under Wayland/Sway/Hyprland; the TUI will still launch if the terminal is large enough).${RESET}\n";
         }
     }
 
@@ -748,7 +788,11 @@ sub radio_tui {
         print "\e[?25h\e[?1049l";         # show cursor, leave alt screen
         if ($did_resize) {
             if ($used_sway) {
-                tui_request_term_resize_sway($orig_rows, $orig_cols);
+                if ($ENV{HYPRLAND_INSTANCE_SIGNATURE}) {
+                    tui_request_term_resize_hyprland($orig_rows, $orig_cols, 0);
+                } else {
+                    tui_request_term_resize_sway($orig_rows, $orig_cols);
+                }
             } else {
                 tui_request_term_resize($orig_rows, $orig_cols);
             }
