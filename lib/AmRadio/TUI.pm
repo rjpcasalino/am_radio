@@ -138,6 +138,21 @@ sub tui_hyprland_window_is_floating {
     return $window->{floating} ? 1 : 0;
 }
 
+sub tui_hyprctl_dispatch {
+    my ($dispatcher, @args) = @_;
+    my @parts = ($dispatcher, @args);
+    my $flat  = join(' ', @parts);
+
+    # Standard hyprctl CLI syntax.
+    return 1 if system('hyprctl', 'dispatch', $dispatcher, @args) == 0;
+    # Some wrappers expect the dispatcher payload as a single argument.
+    return 1 if system('hyprctl', 'dispatch', $flat) == 0;
+    # Lua-style wrappers may require a quoted payload.
+    return 1 if system('hyprctl', 'dispatch', "'$flat'") == 0;
+
+    return 0;
+}
+
 sub tui_request_term_resize_hyprland {
     my ($rows, $cols, $float_window) = @_;
     return unless $ENV{HYPRLAND_INSTANCE_SIGNATURE} && length $ENV{HYPRLAND_INSTANCE_SIGNATURE};
@@ -148,11 +163,11 @@ sub tui_request_term_resize_hyprland {
     my $was_floating = tui_hyprland_window_is_floating();
 
     if ($float_window && !$was_floating) {
-        system('hyprctl', 'dispatch', 'togglefloating');
+        tui_hyprctl_dispatch('togglefloating');
         select(undef, undef, undef, 0.1);
     }
 
-    system('hyprctl', 'dispatch', 'resizeactive', 'exact', $pw, $ph);
+    tui_hyprctl_dispatch('resizeactive', 'exact', $pw, $ph);
     return $was_floating;
 }
 
